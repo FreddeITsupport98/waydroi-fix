@@ -7,97 +7,193 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo -e "${YELLOW}WARNING: This will delete ALL Waydroid data (apps, settings, images).${NC}"
-read -p "Are you sure you want to proceed? (y/n): " -n 1 -r
+# Ask whether to perform a full reset first
+echo -e "${YELLOW}Do you want to RESET Waydroid? This can delete ALL Waydroid data (apps, settings, images).${NC}"
+read -p "Reset Waydroid? (y/n): " -n 1 -r
 echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "Aborting."
-    exit 1
+
+DO_RESET=0
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    DO_RESET=1
 fi
 
-# --- 1. CLEANUP PHASE ---
-echo -e "\n${YELLOW}[1/5] Cleaning up old installation...${NC}"
+if [[ $DO_RESET -eq 1 ]]; then
+    echo -e "${YELLOW}WARNING: This will delete ALL Waydroid data (apps, settings, images).${NC}"
+    read -p "Are you sure you want to proceed? (y/n): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Aborting reset. Proceeding to customization only."
+    else
+        # --- 1. CLEANUP PHASE ---
+        echo -e "\n${YELLOW}[1/5] Cleaning up old installation...${NC}"
 
-# Stop services
-echo "Stopping Waydroid services..."
-systemctl stop waydroid-container 2>/dev/null
-waydroid session stop 2>/dev/null
+        # Stop services
+        echo "Stopping Waydroid services..."
+        systemctl stop waydroid-container 2>/dev/null
+        waydroid session stop 2>/dev/null
 
-# Unmount potential stuck mounts
-echo "Unmounting stuck directories..."
-umount /var/lib/waydroid/rootfs/vendor 2>/dev/null
-umount /var/lib/waydroid/rootfs 2>/dev/null
+        # Unmount potential stuck mounts
+        echo "Unmounting stuck directories..."
+        umount /var/lib/waydroid/rootfs/vendor 2>/dev/null
+        umount /var/lib/waydroid/rootfs 2>/dev/null
 
-# Remove Data
-echo "Removing Waydroid folders..."
-rm -rf /var/lib/waydroid
-rm -rf /home/*/.waydroid
-rm -rf /home/*/.share/waydroid
-rm -rf /home/*/.local/share/waydroid
-rm -rf /root/.waydroid
+        # Remove Data
+        echo "Removing Waydroid folders..."
+        rm -rf /var/lib/waydroid
+        rm -rf /home/*/.waydroid
+        rm -rf /home/*/.share/waydroid
+        rm -rf /home/*/.local/share/waydroid
+        rm -rf /root/.waydroid
 
-# Reinstall Package (Optional but good for sanity)
-echo "Reinstalling Waydroid package..."
-dnf reinstall waydroid -y
+        # Reinstall Package (Optional but good for sanity)
+        echo "Reinstalling Waydroid package..."
+        dnf reinstall waydroid -y
 
-# --- 2. NETWORK FIX PHASE ---
-echo -e "\n${YELLOW}[2/5] Applying Network Fixes (No-Firewall Mode)...${NC}"
+        # --- 2. NETWORK FIX PHASE ---
+        echo -e "\n${YELLOW}[2/5] Applying Network Fixes (No-Firewall Mode)...${NC}"
 
-# Enable IP Forwarding
-echo "Enabling IP Forwarding..."
-sysctl -w net.ipv4.ip_forward=1
-echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-waydroid.conf
+        # Enable IP Forwarding
+        echo "Enabling IP Forwarding..."
+        sysctl -w net.ipv4.ip_forward=1
+        echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-waydroid.conf
 
-# Detect Main Interface
-DEFAULT_IFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
-echo -e "Detected Primary Network Interface: ${GREEN}$DEFAULT_IFACE${NC}"
+        # Detect Main Interface
+        DEFAULT_IFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
+        echo -e "Detected Primary Network Interface: ${GREEN}$DEFAULT_IFACE${NC}"
 
-# Apply NAT Masquerade (Since you have no firewalld)
-# We check if nftables or iptables is present
-if command -v iptables &> /dev/null; then
-    echo "Adding Masquerade rule via iptables..."
-    iptables -t nat -A POSTROUTING -o $DEFAULT_IFACE -j MASQUERADE
+        # Apply NAT Masquerade (Since you have no firewalld)
+        # We check if nftables or iptables is present
+        if command -v iptables &> /dev/null; then
+            echo "Adding Masquerade rule via iptables..."
+            iptables -t nat -A POSTROUTING -o $DEFAULT_IFACE -j MASQUERADE
+        else
+            echo -e "${RED}Warning: iptables not found. Internet might not work immediately.${NC}"
+        fi
+
+        # Ensure DNSMasq is installed (Fedora sometimes lacks it for Waydroid)
+        if ! rpm -q dnsmasq &> /dev/null; then
+            echo "Installing dnsmasq dependency..."
+            dnf install dnsmasq -y
+        fi
+
+        # --- 3. INITIALIZATION PHASE ---
+        echo -e "\n${YELLOW}[3/5] Downloading Android Images...${NC}"
+        echo "Select Android Type:"
+        echo "1) GAPPS (With Google Play Store) - Recommended"
+        echo "2) VANILLA (No Google Apps)"
+        read -p "Enter 1 or 2: " choice
+
+        TYPE="GAPPS"
+        if [ "$choice" == "2" ]; then
+            TYPE="VANILLA"
+        fi
+
+        echo -e "Downloading ${GREEN}$TYPE${NC} images. Please wait, this may take a while..."
+
+        # We manually specify URLs to avoid the "OTA URL" error you saw earlier
+        waydroid init -s $TYPE -f -c https://ota.waydro.id/system -v https://ota.waydro.id/vendor
+
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Download failed! Please check your internet connection.${NC}"
+            exit 1
+        fi
+
+        # --- 4. STARTUP PHASE ---
+        echo -e "\n${YELLOW}[4/5] Starting Services...${NC}"
+        systemctl enable --now waydroid-container
+
+        # Wait for container to settle
+        sleep 5
+
+        # --- 5. FINAL CHECK ---
+        echo -e "\n${GREEN}=== DONE ===${NC}"
+        echo "Waydroid has been reset and reinstalled."
+        echo "You can now launch it from your menu or by running:"
+        echo -e "${YELLOW}waydroid session start${NC}"
+    fi
 else
-    echo -e "${RED}Warning: iptables not found. Internet might not work immediately.${NC}"
+    echo -e "${YELLOW}Skipping Waydroid reset. Proceeding directly to customization...${NC}"
 fi
 
-# Ensure DNSMasq is installed (Fedora sometimes lacks it for Waydroid)
-if ! rpm -q dnsmasq &> /dev/null; then
-    echo "Installing dnsmasq dependency..."
-    dnf install dnsmasq -y
+# --- 6. OPTIONAL CUSTOMIZATION VIA waydroid_script ---
+echo -e "\n${YELLOW}[Optional] Setting up waydroid_script customization helper...${NC}"
+
+WAYDROID_SCRIPT_DIR="${HOME}/.local/share/waydroid_script"
+
+if [ -d "${WAYDROID_SCRIPT_DIR}/.git" ] && [ -f "${WAYDROID_SCRIPT_DIR}/main.py" ]; then
+    echo "Using existing waydroid_script in ${WAYDROID_SCRIPT_DIR}"
+    cd "${WAYDROID_SCRIPT_DIR}" || exit 1
+    if command -v git >/dev/null 2>&1; then
+        echo "Updating waydroid_script (git pull)..."
+        git pull --ff-only || echo -e "${YELLOW}Warning: could not update waydroid_script, continuing with existing copy.${NC}"
+    fi
+else
+    echo "Cloning waydroid_script into ${WAYDROID_SCRIPT_DIR}..."
+    mkdir -p "$(dirname "${WAYDROID_SCRIPT_DIR}")"
+    if command -v git >/dev/null 2>&1; then
+        git clone https://github.com/casualsnek/waydroid_script "${WAYDROID_SCRIPT_DIR}" || {
+            echo -e "${RED}Failed to clone waydroid_script. Aborting customization step.${NC}"
+            exit 1
+        }
+    else
+        echo -e "${RED}git is not installed. Cannot download waydroid_script. Aborting customization step.${NC}"
+        exit 1
+    fi
+    cd "${WAYDROID_SCRIPT_DIR}" || exit 1
 fi
 
-# --- 3. INITIALIZATION PHASE ---
-echo -e "\n${YELLOW}[3/5] Downloading Android Images...${NC}"
-echo "Select Android Type:"
-echo "1) GAPPS (With Google Play Store) - Recommended"
-echo "2) VANILLA (No Google Apps)"
-read -p "Enter 1 or 2: " choice
+# Ensure lzip is installed (required by waydroid_script)
+if ! command -v lzip >/dev/null 2>&1; then
+    echo -e "\n${YELLOW}Installing 'lzip' dependency...${NC}"
+    if [ -r /etc/os-release ]; then
+        . /etc/os-release
+        case "${ID}" in
+            fedora|rhel|rocky|centos)
+                PKG_CMD="sudo dnf install -y lzip"
+                ;;
+            debian|ubuntu|linuxmint|pop)
+                PKG_CMD="sudo apt install -y lzip"
+                ;;
+            arch|manjaro|endeavouros)
+                PKG_CMD="sudo pacman -S --noconfirm lzip"
+                ;;
+            opensuse*|suse|sles)
+                PKG_CMD="sudo zypper install -y lzip"
+                ;;
+            *)
+                PKG_CMD=""
+                ;;
+        esac
+    fi
 
-TYPE="GAPPS"
-if [ "$choice" == "2" ]; then
-    TYPE="VANILLA"
+    if [ -n "${PKG_CMD}" ]; then
+        echo "Running: ${PKG_CMD}"
+        eval "${PKG_CMD}" || {
+            echo -e "${RED}Failed to install 'lzip'. Please install it manually and rerun this script.${NC}"
+            exit 1
+        }
+    else
+        echo -e "${RED}Could not determine package manager to install 'lzip'. Please install it manually and rerun this script.${NC}"
+        exit 1
+    fi
+else
+    echo "'lzip' is already installed."
 fi
 
-echo -e "Downloading ${GREEN}$TYPE${NC} images. Please wait, this may take a while..."
+# Set up Python virtual environment for waydroid_script
+if [ ! -d "venv" ]; then
+    echo "Creating Python virtual environment for waydroid_script..."
+    python3 -m venv venv || {
+        echo -e "${RED}Failed to create Python virtual environment.${NC}"
+        exit 1
+    }
+fi
 
-# We manually specify URLs to avoid the "OTA URL" error you saw earlier
-waydroid init -s $TYPE -f -c https://ota.waydro.id/system -v https://ota.waydro.id/vendor
-
-if [ $? -ne 0 ]; then
-    echo -e "${RED}Download failed! Please check your internet connection.${NC}"
+echo "Installing Python dependencies for waydroid_script..."
+venv/bin/pip install -r requirements.txt || {
+    echo -e "${RED}Failed to install Python dependencies for waydroid_script.${NC}"
     exit 1
-fi
+}
 
-# --- 4. STARTUP PHASE ---
-echo -e "\n${YELLOW}[4/5] Starting Services...${NC}"
-systemctl enable --now waydroid-container
-
-# Wait for container to settle
-sleep 5
-
-# --- 5. FINAL CHECK ---
-echo -e "\n${GREEN}=== DONE ===${NC}"
-echo "Waydroid has been reset and reinstalled."
-echo "You can now launch it from your menu or by running:"
-echo -e "${YELLOW}waydroid session start${NC}"
+echo -e "\n${GREEN}Launching waydroid_script customization tool...${NC}"
+sudo venv/bin/python3 main.py
