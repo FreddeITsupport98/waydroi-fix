@@ -91,9 +91,21 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
         # Remove Data
         echo "Removing Waydroid folders..."
         rm -rf /var/lib/waydroid
-        rm -rf /home/*/.waydroid
-        rm -rf /home/*/.share/waydroid
-        rm -rf /home/*/.local/share/waydroid
+
+        # Determine the regular user home (avoid wiping all of /home/* on multi-user systems)
+        USER_HOME="$HOME"
+        if [[ -n "$SUDO_USER" && "$SUDO_USER" != "root" ]]; then
+            # Resolve the invoking user's home directory safely
+            USER_HOME="$(eval echo "~$SUDO_USER")"
+        fi
+
+        if [[ -n "$USER_HOME" && -d "$USER_HOME" ]]; then
+            rm -rf "$USER_HOME/.waydroid"
+            rm -rf "$USER_HOME/.share/waydroid"
+            rm -rf "$USER_HOME/.local/share/waydroid"
+        fi
+
+        # Also clean root's Waydroid data if present
         rm -rf /root/.waydroid
 
         # Reinstall Package (Optional but good for sanity)
