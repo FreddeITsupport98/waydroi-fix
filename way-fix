@@ -1,0 +1,82 @@
+#!/bin/bash
+
+# way-fix: small CLI wrapper for waydroi-fix
+#
+# Usage:
+#   way-fix               Run full waydroid fix/reset + customization script
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+WAYDROID_FIX_SCRIPT="${SCRIPT_DIR}/waydroid.sh"
+
+usage() {
+  cat <<EOF
+way-fix - helper CLI for waydroi-fix
+
+Usage:
+  way-fix              Run full waydroid fix/reset + customization script
+  way-fix reboot       Restart Waydroid container service
+  way-fix config       Open waydroid_script configuration menu (if installed)
+  way-fix uninstall    Remove this way-fix CLI script
+  way-fix help         Show this help
+EOF
+}
+
+case "$1" in
+  "" )
+    if [ ! -x "${WAYDROID_FIX_SCRIPT}" ]; then
+      echo "Error: ${WAYDROID_FIX_SCRIPT} not found or not executable." >&2
+      exit 1
+    fi
+    sudo "${WAYDROID_FIX_SCRIPT}"
+    ;;
+  reboot )
+    echo "Restarting Waydroid container..."
+    sudo systemctl restart waydroid-container
+    ;;
+  config )
+    WAYDROID_SCRIPT_DIR="$HOME/.local/share/waydroid_script"
+    if [ ! -d "$WAYDROID_SCRIPT_DIR" ] || [ ! -f "$WAYDROID_SCRIPT_DIR/main.py" ]; then
+      echo "waydroid_script not found at $WAYDROID_SCRIPT_DIR. Run 'way-fix' first to install and set it up." >&2
+      exit 1
+    fi
+    cd "$WAYDROID_SCRIPT_DIR" || exit 1
+    if [ ! -x "venv/bin/python3" ]; then
+      echo "Python venv for waydroid_script not found. Run 'way-fix' to set it up." >&2
+      exit 1
+    fi
+    echo "Launching waydroid_script configuration menu..."
+    sudo venv/bin/python3 main.py
+    echo "Configuration session finished."
+    ;;
+  uninstall )
+    echo "This will remove the way-fix CLI at: $0"
+    read -p "Are you sure you want to uninstall way-fix? (y/n): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+      TARGET="$0"
+      if [ ! -w "$(dirname "$TARGET")" ]; then
+        echo "Attempting to remove with sudo..."
+        sudo rm -- "$TARGET" || {
+          echo "Failed to remove $TARGET" >&2
+          exit 1
+        }
+      else
+        rm -- "$TARGET" || {
+          echo "Failed to remove $TARGET" >&2
+          exit 1
+        }
+      fi
+      echo "way-fix CLI has been uninstalled."
+    else
+      echo "Uninstall cancelled."
+    fi
+    ;;
+  help|-h|--help )
+    usage
+    ;;
+  * )
+    echo "Unknown subcommand: $1" >&2
+    usage
+    exit 1
+    ;;
+esac

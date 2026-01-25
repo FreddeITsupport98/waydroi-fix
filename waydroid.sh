@@ -171,6 +171,25 @@ else
     echo -e "${YELLOW}Skipping Waydroid reset. Proceeding directly to customization...${NC}"
 fi
 
+# Offer to install the 'way-fix' CLI helper
+echo -e "\n${YELLOW}Do you want to install the 'way-fix' CLI helper (way-fix, way-fix reboot, way-fix uninstall)?${NC}"
+read -p "Install way-fix CLI into /usr/local/bin? (y/n): " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+    SRC_WAY_FIX="${SCRIPT_DIR}/way-fix"
+    if [ -f "${SRC_WAY_FIX}" ]; then
+        echo "Installing way-fix to /usr/local/bin/way-fix..."
+        sudo install -m 0755 "${SRC_WAY_FIX}" /usr/local/bin/way-fix || {
+            echo -e "${YELLOW}Warning: failed to install way-fix CLI. You can copy it manually.${NC}"
+        }
+    else
+        echo -e "${YELLOW}way-fix script not found next to waydroid.sh; skipping CLI install.${NC}"
+    fi
+else
+    echo "Skipping installation of way-fix CLI."
+fi
+
 # --- 6. OPTIONAL CUSTOMIZATION VIA waydroid_script ---
 echo -e "\n${YELLOW}[Optional] Setting up waydroid_script customization helper...${NC}"
 

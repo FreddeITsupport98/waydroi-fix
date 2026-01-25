@@ -4,12 +4,13 @@
 
 Helper script to repair, (optionally) reset, and customize a Waydroid installation on Linux.
 
-This repository provides a Bash script, `waydroid.sh`, that can:
+This repository provides a Bash script, `waydroid.sh`, plus a small CLI helper, `way-fix`, that can:
 
 - Optionally **reset** Waydroid (delete data, reinstall package, re-download images)
 - Apply **network fixes** (IP forwarding, NAT, dnsmasq) to help Waydroid get online
-- Initialize Waydroid with either **GAPPS** or **VANILLA** images
+- Initialize Waydroid with a **VANILLA** image or a **GAPPS** image (chosen via yes/no prompt)
 - Start the Waydroid container
+- Offer to install a global `way-fix` CLI (`way-fix`, `way-fix reboot`, `way-fix config`, `way-fix uninstall`)
 - Integrate with the excellent **[waydroid_script](https://github.com/casualsnek/waydroid_script)** project to customize Waydroid (GApps, Magisk, Widevine, microG, etc.)
 
 > **Important:** This script is not affiliated with, endorsed by, or maintained by the authors of `waydroid_script`. It only uses their public project as a helper for post-install customization.
@@ -68,10 +69,10 @@ These steps help Waydroid get a working network connection even on systems witho
 
 ### 3. Waydroid initialization
 
-If you choose to reset, the script will re-initialize Waydroid and ask which image type you want:
+If you choose to reset, the script will re-initialize Waydroid and ask if you want a GAPPS base image:
 
-- **GAPPS** – comes with Google Play services and Play Store.
-- **VANILLA** – no Google apps, more minimal.
+- Answer **y** → **GAPPS** – comes with Google Play services and Play Store.
+- Answer **n** → **VANILLA** – no Google apps, more minimal.
 
 It uses explicit OTA URLs for system and vendor images to avoid common `waydroid init` OTA URL errors.
 
@@ -151,16 +152,30 @@ When the script starts, you will see a question similar to:
   - It prints a message that it is skipping reset.
   - Your current Waydroid install is left as‑is.
 
-### 4. Select image type (reset path only)
+### 4. Choose GAPPS base image (reset path only)
 
-If you chose to reset, you will be asked to pick:
+If you chose to reset, you will be asked if you want to use a GAPPS base image:
 
-- `1` – **GAPPS** (recommended if you need Google Play)
-- `2` – **VANILLA** (no Google apps)
+- Answer **y** → **GAPPS** (recommended if you need Google Play)
+- Answer **n** → **VANILLA** (no Google apps)
 
 The script then downloads the selected images using `waydroid init` and starts the Waydroid container.
 
-### 5. Customization with `waydroid_script`
+### 5. Optional `way-fix` CLI install
+
+After the reset decision (whether you reset or not), `waydroid.sh` will offer to install a global CLI helper:
+
+- Installs `way-fix` into `/usr/local/bin/way-fix` (using `sudo install`) if you answer **y** and the `way-fix` script is present next to `waydroid.sh`.
+- If you answer **n`, it skips CLI installation and continues.
+
+Once installed, the `way-fix` command provides:
+
+- `way-fix` – run the full fix/reset + customization flow (internally calls `waydroid.sh`)
+- `way-fix reboot` – restart the Waydroid container service (`systemctl restart waydroid-container`)
+- `way-fix config` – open the `waydroid_script` configuration menu (if already set up by `waydroid.sh`)
+- `way-fix uninstall` – remove the `way-fix` CLI script itself
+
+### 6. Customization with `waydroid_script`
 
 After the reset step (or immediately, if you skipped it), the script will:
 
@@ -175,6 +190,56 @@ After the reset step (or immediately, if you skipped it), the script will:
    ```
 
 At this point you are inside `waydroid_script`'s own interactive menu / command interface. Refer to its README for all available subcommands.
+
+---
+
+## CLI usage (`way-fix`)
+
+If you accepted the CLI install prompt or manually installed/symlinked `way-fix` into your `$PATH`, you can use:
+
+```bash
+way-fix              # run full fix/reset + customization (wrapper around waydroid.sh)
+way-fix reboot       # restart Waydroid container (systemctl restart waydroid-container)
+way-fix config       # open waydroid_script configuration menu (if already set up)
+way-fix uninstall    # remove the way-fix CLI script itself
+```
+
+### What each command does
+
+- **`way-fix`**
+  - Runs the main `waydroid.sh` script with `sudo`.
+  - You will be asked:
+    - Whether to **reset** Waydroid or keep your existing install.
+    - (If resetting) Whether to use a **GAPPS** base image.
+    - Whether to install the **`way-fix` CLI** (if not already installed).
+  - After that, it prepares and launches `waydroid_script` so you can install GApps, Magisk, microG, etc.
+  - When `waydroid_script` exits, `waydroid.sh` prints `All done.` and waits for you to press Enter before returning you to the shell.
+
+- **`way-fix reboot`**
+  - Calls `sudo systemctl restart waydroid-container`.
+  - Useful when Waydroid is already configured and you just want to quickly restart the container.
+
+- **`way-fix config`**
+  - Looks for `waydroid_script` under `~/.local/share/waydroid_script`.
+  - Verifies that the Python virtual environment (`venv/bin/python3`) exists.
+  - If everything is set up, it runs `sudo venv/bin/python3 main.py` in that directory.
+  - This opens the **waydroid_script menu** directly, without touching your Waydroid data or re-running the reset logic.
+  - When you exit the waydroid_script menu, it prints `Configuration session finished.` and returns you to your shell prompt.
+
+- **`way-fix uninstall`**
+  - Asks for confirmation.
+  - Then removes the `way-fix` script from the path it is running from (for example `/usr/local/bin/way-fix` if you installed it there).
+  - If it cannot remove the file with normal permissions, it will attempt to remove it using `sudo`.
+
+### Assumptions and layout
+
+- `way-fix` assumes `waydroid.sh` and `way-fix` live in the same directory (as in this repo).
+- `way-fix config` expects that:
+  - `waydroid.sh` has already run at least once,
+  - `~/.local/share/waydroid_script` exists, and
+  - the `venv` there has been created and populated via `waydroid.sh`.
+
+If those assumptions are not met, `way-fix config` will show a clear error message and tell you to run `way-fix` (or `waydroid.sh`) first.
 
 ---
 
