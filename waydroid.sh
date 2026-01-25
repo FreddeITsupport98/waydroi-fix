@@ -216,29 +216,115 @@ else
 fi
 
 # Offer to install the 'way-fix' CLI helper
-echo -e "\n${YELLOW}Do you want to install the 'way-fix' CLI helper (way-fix, way-fix reboot, way-fix uninstall)?${NC}"
+echo -e "\n${YELLOW}Do you want to install the 'way-fix' CLI helper (way-fix, way-fix reboot, way-fix config, way-fix uninstall)?${NC}"
 read -p "Install way-fix CLI into /usr/local/bin? (y/n): " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-    SRC_WAY_FIX="${SCRIPT_DIR}/way-fix"
-    SRC_WAYDROID_FIX="${SCRIPT_DIR}/waydroid.sh"
-    if [ -f "${SRC_WAY_FIX}" ]; then
-        echo "Installing way-fix to /usr/local/bin/way-fix..."
-        sudo install -m 0755 "${SRC_WAY_FIX}" /usr/local/bin/way-fix || {
-            echo -e "${YELLOW}Warning: failed to install way-fix CLI. You can copy it manually.${NC}"
-        }
+    echo "Installing waydroid.sh to /usr/local/bin/waydroid.sh..."
+    sudo install -m 0755 "$0" /usr/local/bin/waydroid.sh || {
+        echo -e "${YELLOW}Warning: failed to install waydroid.sh. You may need to run it from the repository path or install it manually.${NC}"
+    }
+
+    echo "Installing way-fix to /usr/local/bin/way-fix..."
+    sudo tee /usr/local/bin/way-fix >/dev/null <<'EOF'
+#!/bin/bash
+
+# way-fix: small CLI wrapper for waydroi-fix
+#
+# Usage:
+#   way-fix              Open waydroid_script menu (if set up), or run full setup via waydroid.sh
+#   way-fix reboot       Restart Waydroid container service
+#   way-fix config       Open waydroid_script configuration menu (if installed)
+#   way-fix uninstall    Remove this way-fix CLI script
+#   way-fix help         Show help
+
+WAYDROID_FIX_SCRIPT="/usr/local/bin/waydroid.sh"
+
+usage() {
+  cat <<EOF_INNER
+way-fix - helper CLI for waydroi-fix
+
+Usage:
+  way-fix              Open waydroid_script menu (if set up), or run full setup via waydroid.sh
+  way-fix reboot       Restart Waydroid container service
+  way-fix config       Open waydroid_script configuration menu (if installed)
+  way-fix uninstall    Remove this way-fix CLI script
+  way-fix help         Show this help
+EOF_INNER
+}
+
+case "$1" in
+  "" )
+    WAYDROID_SCRIPT_DIR="$HOME/.local/share/waydroid_script"
+    if [ -d "$WAYDROID_SCRIPT_DIR" ] && [ -f "$WAYDROID_SCRIPT_DIR/main.py" ] && [ -x "$WAYDROID_SCRIPT_DIR/venv/bin/python3" ]; then
+      cd "$WAYDROID_SCRIPT_DIR" || exit 1
+      echo "Launching waydroid_script configuration menu..."
+      sudo venv/bin/python3 main.py
+      echo "Configuration session finished."
     else
-        echo -e "${YELLOW}way-fix script not found next to waydroid.sh; skipping CLI install.${NC}"
+      if [ ! -x "${WAYDROID_FIX_SCRIPT}" ]; then
+        echo "Error: ${WAYDROID_FIX_SCRIPT} not found or not executable. Run waydroid.sh once to set things up." >&2
+        exit 1
+      fi
+      echo "waydroid_script is not fully set up yet. Running initial setup via waydroid.sh..."
+      sudo "${WAYDROID_FIX_SCRIPT}"
     fi
-    if [ -f "${SRC_WAYDROID_FIX}" ]; then
-        echo "Installing waydroid.sh to /usr/local/bin/waydroid.sh..."
-        sudo install -m 0755 "${SRC_WAYDROID_FIX}" /usr/local/bin/waydroid.sh || {
-            echo -e "${YELLOW}Warning: failed to install waydroid.sh. You may need to run it from the repository path or install it manually.${NC}"
+    ;;
+  reboot )
+    echo "Restarting Waydroid container..."
+    sudo systemctl restart waydroid-container
+    ;;
+  config )
+    WAYDROID_SCRIPT_DIR="$HOME/.local/share/waydroid_script"
+    if [ ! -d "$WAYDROID_SCRIPT_DIR" ] || [ ! -f "$WAYDROID_SCRIPT_DIR/main.py" ]; then
+      echo "waydroid_script not found at $WAYDROID_SCRIPT_DIR. Run 'way-fix' first to install and set it up." >&2
+      exit 1
+    fi
+    cd "$WAYDROID_SCRIPT_DIR" || exit 1
+    if [ ! -x "venv/bin/python3" ]; then
+      echo "Python venv for waydroid_script not found. Run 'way-fix' to set it up." >&2
+      exit 1
+    fi
+    echo "Launching waydroid_script configuration menu..."
+    sudo venv/bin/python3 main.py
+    echo "Configuration session finished."
+    ;;
+  uninstall )
+    echo "This will remove the way-fix CLI at: $0"
+    read -p "Are you sure you want to uninstall way-fix? (y/n): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+      TARGET="$0"
+      if [ ! -w "$(dirname "$TARGET")" ]; then
+        echo "Attempting to remove with sudo..."
+        sudo rm -- "$TARGET" || {
+          echo "Failed to remove $TARGET" >&2
+          exit 1
         }
+      else
+        rm -- "$TARGET" || {
+          echo "Failed to remove $TARGET" >&2
+          exit 1
+        }
+      fi
+      echo "way-fix CLI has been uninstalled."
     else
-        echo -e "${YELLOW}waydroid.sh not found; skipping installation of global waydroid.sh copy.${NC}"
+      echo "Uninstall cancelled."
     fi
+    ;;
+  help|-h|--help )
+    usage
+    ;;
+  * )
+    echo "Unknown subcommand: $1" >&2
+    usage
+    exit 1
+    ;;
+esac
+EOF
+    sudo chmod 0755 /usr/local/bin/way-fix || {
+        echo -e "${YELLOW}Warning: failed to chmod /usr/local/bin/way-fix. You may need to fix permissions manually.${NC}"
+    }
 else
     echo "Skipping installation of way-fix CLI."
 fi
