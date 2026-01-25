@@ -6,6 +6,7 @@ Helper script to repair, (optionally) reset, and customize a Waydroid installati
 
 This repository provides a Bash script, `waydroid.sh`, plus a small CLI helper, `way-fix`, that can:
 
+- Ensure **Waydroid is installed** and offer to install it automatically on supported distros
 - Optionally **reset** Waydroid (delete data, reinstall package, re-download images)
 - Apply **network fixes** (IP forwarding, NAT, dnsmasq) to help Waydroid get online
 - Initialize Waydroid with a **VANILLA** image or a **GAPPS** image (chosen via yes/no prompt)
@@ -35,9 +36,19 @@ You can choose to run only the customization phase (no reset) if your existing W
 
 ## Features
 
-### 1. Optional reset
+### 1. Waydroid presence check
 
-On start, the script asks if you want to fully reset Waydroid.
+Before doing anything else, the script checks whether the `waydroid` command is available:
+
+- If **Waydroid is missing**:
+  - It asks if you want to install Waydroid now.
+  - On supported distros (Fedora/RHEL, Debian/Ubuntu, Arch-based, openSUSE/SLES) it tries to install the `waydroid` package using the matching package manager.
+  - If installation fails or the distro is unknown, it prints a clear error and exits so you can install Waydroid manually.
+- If you decline installation, the script aborts because Waydroid is required for all further steps.
+
+### 2. Optional reset
+
+On start (after verifying Waydroid is installed), the script asks if you want to fully reset Waydroid.
 
 - If you choose **yes**:
   - It asks for a second confirmation (double safety).
@@ -55,7 +66,7 @@ On start, the script asks if you want to fully reset Waydroid.
   - Your existing Waydroid data and images are left untouched.
   - The script goes straight to the customization phase.
 
-### 2. Network fixes
+### 3. Network fixes
 
 During the reset path, the script attempts to fix common networking issues:
 
@@ -67,7 +78,7 @@ During the reset path, the script attempts to fix common networking issues:
 
 These steps help Waydroid get a working network connection even on systems without firewalld.
 
-### 3. Waydroid initialization
+### 4. Waydroid initialization
 
 If you choose to reset, the script will re-initialize Waydroid and ask if you want a GAPPS base image:
 
@@ -152,7 +163,7 @@ When the script starts, you will see a question similar to:
   - It prints a message that it is skipping reset.
   - Your current Waydroid install is left as‑is.
 
-### 4. Choose GAPPS base image (reset path only)
+### 5. Choose GAPPS base image (reset path only)
 
 If you chose to reset, you will be asked if you want to use a GAPPS base image:
 
@@ -161,7 +172,7 @@ If you chose to reset, you will be asked if you want to use a GAPPS base image:
 
 The script then downloads the selected images using `waydroid init` and starts the Waydroid container.
 
-### 5. Optional `way-fix` CLI install
+### 6. Optional `way-fix` CLI install
 
 After the reset decision (whether you reset or not), `waydroid.sh` will offer to install a global CLI helper:
 
@@ -175,7 +186,7 @@ Once installed, the `way-fix` command provides:
 - `way-fix config` – open the `waydroid_script` configuration menu (if already set up by `waydroid.sh`)
 - `way-fix uninstall` – remove the `way-fix` CLI script itself
 
-### 6. Customization with `waydroid_script`
+### 7. Customization with `waydroid_script`
 
 After the reset step (or immediately, if you skipped it), the script will:
 
