@@ -7,6 +7,12 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Mode flag: when called as `waydroid.sh --setup-only`, skip reset/network and only ensure customization tooling
+SETUP_ONLY=0
+if [[ "$1" == "--setup-only" ]]; then
+    SETUP_ONLY=1
+fi
+
 # --- 0. Ensure Waydroid is installed ---
 if ! command -v waydroid >/dev/null 2>&1; then
     echo -e "${YELLOW}Waydroid does not appear to be installed on this system.${NC}"
@@ -51,17 +57,18 @@ if ! command -v waydroid >/dev/null 2>&1; then
     fi
 fi
 
-# Ask whether to perform a full reset first
-echo -e "${YELLOW}Do you want to RESET Waydroid? This can delete ALL Waydroid data (apps, settings, images).${NC}"
-read -p "Reset Waydroid? (y/n): " -n 1 -r
-echo
+if [[ $SETUP_ONLY -eq 0 ]]; then
+    # Ask whether to perform a full reset first
+    echo -e "${YELLOW}Do you want to RESET Waydroid? This can delete ALL Waydroid data (apps, settings, images).${NC}"
+    read -p "Reset Waydroid? (y/n): " -n 1 -r
+    echo
 
-DO_RESET=0
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    DO_RESET=1
-fi
+    DO_RESET=0
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        DO_RESET=1
+    fi
 
-if [[ $DO_RESET -eq 1 ]]; then
+    if [[ $DO_RESET -eq 1 ]]; then
     echo -e "${YELLOW}WARNING: This will delete ALL Waydroid data (apps, settings, images).${NC}"
     read -p "Are you sure you want to proceed? (y/n): " -n 1 -r
     echo
@@ -212,7 +219,10 @@ if [[ $DO_RESET -eq 1 ]]; then
         echo -e "${YELLOW}waydroid session start${NC}"
     fi
 else
-    echo -e "${YELLOW}Skipping Waydroid reset. Proceeding directly to customization...${NC}"
+        echo -e "${YELLOW}Skipping Waydroid reset. Proceeding directly to customization...${NC}"
+    fi
+else
+    echo -e "${YELLOW}Setup-only mode detected: skipping Waydroid reset phase.${NC}"
 fi
 
 # Offer to install the 'way-fix' CLI helper
@@ -232,20 +242,18 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
 # way-fix: small CLI wrapper for waydroi-fix
 #
 # Usage:
-#   way-fix              Open waydroid_script menu (if set up), or run full setup via waydroid.sh
+#   way-fix              Open waydroid_script menu (and set it up if missing)
 #   way-fix reboot       Restart Waydroid container service
 #   way-fix config       Open waydroid_script configuration menu (if installed)
 #   way-fix uninstall    Remove this way-fix CLI script
 #   way-fix help         Show help
-
-WAYDROID_FIX_SCRIPT="/usr/local/bin/waydroid.sh"
 
 usage() {
   cat <<EOF_INNER
 way-fix - helper CLI for waydroi-fix
 
 Usage:
-  way-fix              Open waydroid_script menu (if set up), or run full setup via waydroid.sh
+  way-fix              Open waydroid_script menu (and set it up if missing)
   way-fix reboot       Restart Waydroid container service
   way-fix config       Open waydroid_script configuration menu (if installed)
   way-fix uninstall    Remove this way-fix CLI script
@@ -253,22 +261,77 @@ Usage:
 EOF_INNER
 }
 
+run_menu() {
+  WAYDROID_SCRIPT_DIR="$HOME/.local/share/waydroid_script"
+
+  if [ ! -d "$WAYDROID_SCRIPT_DIR" ] || [ ! -f "$WAYDROID_SCRIPT_DIR/main.py" ]; then
+    echo "Setting up waydroid_script in $WAYDROID_SCRIPT_DIR..."
+    mkdir -p "$(dirname "$WAYDROID_SCRIPT_DIR")" || exit 1
+    if ! command -v git >/dev/null 2>&1; then
+      echo "Error: git is required to clone waydroid_script." >&2
+      exit 1
+    fi
+    git clone https://github.com/casualsnek/waydroid_script "$WAYDROID_SCRIPT_DIR" || {
+      echo "Failed to clone waydroid_script." >&2
+      exit 1
+    }
+  fi
+
+  cd "$WAYDROID_SCRIPT_DIR" || exit 1
+
+  # Ensure lzip is installed (required by waydroid_script)
+  if ! command -v lzip >/dev/null 2>&1; then
+    echo "Installing 'lzip' dependency (requires sudo)..."
+    PKG_CMD=""
+    if [ -r /etc/os-release ]; then
+      . /etc/os-release
+      case "$ID" in
+        fedora|rhel|rocky|centos)
+          PKG_CMD="sudo dnf install -y lzip";;
+        debian|ubuntu|linuxmint|pop)
+          PKG_CMD="sudo apt install -y lzip";;
+        arch|manjaro|endeavouros)
+          PKG_CMD="sudo pacman -S --noconfirm lzip";;
+        opensuse*|suse|sles)
+          PKG_CMD="sudo zypper install -y lzip";;
+        *) PKG_CMD="";;
+      esac
+    fi
+    if [ -n "$PKG_CMD" ]; then
+      echo "Running: $PKG_CMD"
+      eval "$PKG_CMD" || {
+        echo "Failed to install 'lzip'. Please install it manually and re-run way-fix." >&2
+        exit 1
+      }
+    else
+      echo "Could not determine package manager to install 'lzip'. Please install it manually and re-run way-fix." >&2
+      exit 1
+    fi
+  fi
+
+  # Ensure Python venv
+  if [ ! -d "venv" ]; then
+    echo "Creating Python virtual environment for waydroid_script..."
+    python3 -m venv venv || {
+      echo "Failed to create Python virtual environment." >&2
+      exit 1
+    }
+  fi
+
+  echo "Installing Python dependencies for waydroid_script..."
+  venv/bin/pip install -r requirements.txt || {
+    echo "Failed to install Python dependencies for waydroid_script." >&2
+    exit 1
+  }
+
+  echo "Launching waydroid_script configuration menu..."
+  sudo venv/bin/python3 main.py
+  echo "Configuration session finished."
+}
+
 case "$1" in
   "" )
-    WAYDROID_SCRIPT_DIR="$HOME/.local/share/waydroid_script"
-    if [ -d "$WAYDROID_SCRIPT_DIR" ] && [ -f "$WAYDROID_SCRIPT_DIR/main.py" ] && [ -x "$WAYDROID_SCRIPT_DIR/venv/bin/python3" ]; then
-      cd "$WAYDROID_SCRIPT_DIR" || exit 1
-      echo "Launching waydroid_script configuration menu..."
-      sudo venv/bin/python3 main.py
-      echo "Configuration session finished."
-    else
-      if [ ! -x "${WAYDROID_FIX_SCRIPT}" ]; then
-        echo "Error: ${WAYDROID_FIX_SCRIPT} not found or not executable. Run waydroid.sh once to set things up." >&2
-        exit 1
-      fi
-      echo "waydroid_script is not fully set up yet. Running initial setup via waydroid.sh..."
-      sudo "${WAYDROID_FIX_SCRIPT}"
-    fi
+    run_menu
     ;;
   reboot )
     echo "Restarting Waydroid container..."
