@@ -329,9 +329,61 @@ run_menu() {
   echo "Configuration session finished."
 }
 
+show_menu() {
+  while true; do
+    echo
+    echo "way-fix menu (use WASD, Enter = default, E = exit):"
+    echo "  [W] Open waydroid_script configuration menu"
+    echo "  [S] Restart Waydroid container"
+    echo "  [D] Uninstall way-fix CLI"
+    echo "  [E] Exit"
+    printf "Press W/S/D/E (Enter = W): "
+    read -n1 -r choice
+    echo
+    case "$choice" in
+      ""|"w"|"W" )
+        run_menu
+        ;;
+      "s"|"S" )
+        echo "Restarting Waydroid container..."
+        sudo systemctl restart waydroid-container
+        ;;
+      "d"|"D" )
+        echo "This will remove the way-fix CLI at: $0"
+        read -p "Type YES in capital letters to uninstall, anything else to cancel: " confirm
+        if [[ "$confirm" == "YES" ]]; then
+          TARGET="$0"
+          if [ ! -w "$(dirname "$TARGET")" ]; then
+            echo "Attempting to remove with sudo..."
+            sudo rm -- "$TARGET" || {
+              echo "Failed to remove $TARGET" >&2
+              exit 1
+            }
+          else
+            rm -- "$TARGET" || {
+              echo "Failed to remove $TARGET" >&2
+              exit 1
+            }
+          fi
+          echo "way-fix CLI has been uninstalled."
+          break
+        else
+          echo "Uninstall cancelled."
+        fi
+        ;;
+      "e"|"E" )
+        break
+        ;;
+      * )
+        echo "Invalid choice, please press W, S, D or E."
+        ;;
+    esac
+  done
+}
+
 case "$1" in
   "" )
-    run_menu
+    show_menu
     ;;
   reboot )
     echo "Restarting Waydroid container..."
