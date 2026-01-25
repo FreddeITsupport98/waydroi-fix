@@ -47,7 +47,35 @@ if [[ $DO_RESET -eq 1 ]]; then
 
         # Reinstall Package (Optional but good for sanity)
         echo "Reinstalling Waydroid package..."
-        dnf reinstall waydroid -y
+
+        PKG_REINSTALL_CMD=""
+        if [ -r /etc/os-release ]; then
+            . /etc/os-release
+            case "${ID}" in
+                fedora|rhel|rocky|centos)
+                    PKG_REINSTALL_CMD="sudo dnf reinstall -y waydroid"
+                    ;;
+                debian|ubuntu|linuxmint|pop)
+                    PKG_REINSTALL_CMD="sudo apt install --reinstall -y waydroid"
+                    ;;
+                arch|manjaro|endeavouros)
+                    PKG_REINSTALL_CMD="sudo pacman -S --noconfirm waydroid"
+                    ;;
+                opensuse*|suse|sles)
+                    PKG_REINSTALL_CMD="sudo zypper install -y --force waydroid"
+                    ;;
+                *)
+                    PKG_REINSTALL_CMD=""
+                    ;;
+            esac
+        fi
+
+        if [ -n "${PKG_REINSTALL_CMD}" ]; then
+            echo "Running: ${PKG_REINSTALL_CMD}"
+            eval "${PKG_REINSTALL_CMD}" || echo -e "${YELLOW}Warning: failed to reinstall Waydroid package. Continuing with existing installation.${NC}"
+        else
+            echo -e "${YELLOW}Could not determine package manager to reinstall Waydroid. Please manage the Waydroid package manually if needed.${NC}"
+        fi
 
         # --- 2. NETWORK FIX PHASE ---
         echo -e "\n${YELLOW}[2/5] Applying Network Fixes (No-Firewall Mode)...${NC}"
@@ -70,10 +98,38 @@ if [[ $DO_RESET -eq 1 ]]; then
             echo -e "${RED}Warning: iptables not found. Internet might not work immediately.${NC}"
         fi
 
-        # Ensure DNSMasq is installed (Fedora sometimes lacks it for Waydroid)
-        if ! rpm -q dnsmasq &> /dev/null; then
+        # Ensure dnsmasq is installed (some distros lack it by default for Waydroid)
+        if ! command -v dnsmasq >/dev/null 2>&1; then
             echo "Installing dnsmasq dependency..."
-            dnf install dnsmasq -y
+
+            DNSMASQ_CMD=""
+            if [ -r /etc/os-release ]; then
+                . /etc/os-release
+                case "${ID}" in
+                    fedora|rhel|rocky|centos)
+                        DNSMASQ_CMD="sudo dnf install -y dnsmasq"
+                        ;;
+                    debian|ubuntu|linuxmint|pop)
+                        DNSMASQ_CMD="sudo apt install -y dnsmasq"
+                        ;;
+                    arch|manjaro|endeavouros)
+                        DNSMASQ_CMD="sudo pacman -S --noconfirm dnsmasq"
+                        ;;
+                    opensuse*|suse|sles)
+                        DNSMASQ_CMD="sudo zypper install -y dnsmasq"
+                        ;;
+                    *)
+                        DNSMASQ_CMD=""
+                        ;;
+                esac
+            fi
+
+            if [ -n "${DNSMASQ_CMD}" ]; then
+                echo "Running: ${DNSMASQ_CMD}"
+                eval "${DNSMASQ_CMD}" || echo -e "${YELLOW}Warning: failed to install dnsmasq. Waydroid networking may not work correctly.${NC}"
+            else
+                echo -e "${YELLOW}Could not determine package manager to install dnsmasq. Please install it manually if Waydroid networking fails.${NC}"
+            fi
         fi
 
         # --- 3. INITIALIZATION PHASE ---
