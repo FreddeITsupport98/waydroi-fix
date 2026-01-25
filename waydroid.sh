@@ -7,6 +7,50 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# --- 0. Ensure Waydroid is installed ---
+if ! command -v waydroid >/dev/null 2>&1; then
+    echo -e "${YELLOW}Waydroid does not appear to be installed on this system.${NC}"
+    read -p "Install Waydroid package now? (y/n): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        PKG_INSTALL_CMD=""
+        if [ -r /etc/os-release ]; then
+            . /etc/os-release
+            case "${ID}" in
+                fedora|rhel|rocky|centos)
+                    PKG_INSTALL_CMD="sudo dnf install -y waydroid"
+                    ;;
+                debian|ubuntu|linuxmint|pop)
+                    PKG_INSTALL_CMD="sudo apt install -y waydroid"
+                    ;;
+                arch|manjaro|endeavouros)
+                    PKG_INSTALL_CMD="sudo pacman -S --noconfirm waydroid"
+                    ;;
+                opensuse*|suse|sles)
+                    PKG_INSTALL_CMD="sudo zypper install -y waydroid"
+                    ;;
+                *)
+                    PKG_INSTALL_CMD=""
+                    ;;
+            esac
+        fi
+
+        if [ -n "${PKG_INSTALL_CMD}" ]; then
+            echo "Running: ${PKG_INSTALL_CMD}"
+            if ! eval "${PKG_INSTALL_CMD}"; then
+                echo -e "${RED}Failed to install Waydroid. Please install it manually and re-run this script.${NC}"
+                exit 1
+            fi
+        else
+            echo -e "${RED}Could not determine package manager to install Waydroid. Please install it manually and re-run this script.${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${RED}Waydroid is required for this script to work. Aborting.${NC}"
+        exit 1
+    fi
+fi
+
 # Ask whether to perform a full reset first
 echo -e "${YELLOW}Do you want to RESET Waydroid? This can delete ALL Waydroid data (apps, settings, images).${NC}"
 read -p "Reset Waydroid? (y/n): " -n 1 -r
