@@ -261,6 +261,25 @@ Usage:
 EOF_INNER
 }
 
+restart_container_with_progress() {
+  echo -n "Restarting Waydroid container "
+  sudo systemctl restart waydroid-container &>/dev/null &
+  local pid=$!
+  local spinner='|/-\\'
+  local i=0
+  while kill -0 "$pid" 2>/dev/null; do
+    i=$(( (i + 1) % 4 ))
+    printf "\rRestarting Waydroid container %s" "${spinner:$i:1}"
+    sleep 0.2
+  done
+  if sudo systemctl is-active --quiet waydroid-container; then
+    printf "\rRestarting Waydroid container [DONE]\n"
+  else
+    printf "\rRestarting Waydroid container [FAILED]\n"
+  fi
+  sleep 1
+}
+
 run_menu() {
   WAYDROID_SCRIPT_DIR="$HOME/.local/share/waydroid_script"
 
@@ -358,8 +377,7 @@ show_menu() {
         run_menu
         ;;
       "s"|"S" )
-        echo "Restarting Waydroid container..."
-        sudo systemctl restart waydroid-container
+        restart_container_with_progress
         ;;
       "d"|"D" )
         echo "This will remove the way-fix CLI at: $0"
@@ -399,8 +417,7 @@ case "$1" in
     show_menu
     ;;
   reboot )
-    echo "Restarting Waydroid container..."
-    sudo systemctl restart waydroid-container
+    restart_container_with_progress
     ;;
   config )
     WAYDROID_SCRIPT_DIR="$HOME/.local/share/waydroid_script"

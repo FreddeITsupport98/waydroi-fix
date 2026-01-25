@@ -209,48 +209,57 @@ At this point you are inside `waydroid_script`'s own interactive menu / command 
 If you accepted the CLI install prompt or manually installed/symlinked `way-fix` into your `$PATH`, you can use:
 
 ```bash
-way-fix              # run full fix/reset + customization (wrapper around waydroid.sh)
-way-fix reboot       # restart Waydroid container (systemctl restart waydroid-container)
-way-fix config       # open waydroid_script configuration menu (if already set up)
+way-fix              # open interactive WASD-style menu for common actions
+way-fix reboot       # restart Waydroid container (shortcut)
+way-fix config       # directly open waydroid_script configuration menu
 way-fix uninstall    # remove the way-fix CLI script itself
 ```
 
-### What each command does
+### Interactive menu (default `way-fix`)
 
-- **`way-fix`**
-  - Runs the main `waydroid.sh` script with `sudo`.
-  - You will be asked:
-    - Whether to **reset** Waydroid or keep your existing install.
-    - (If resetting) Whether to use a **GAPPS** base image.
-    - Whether to install the **`way-fix` CLI** (if not already installed).
-  - After that, it prepares and launches `waydroid_script` so you can install GApps, Magisk, microG, etc.
-  - When `waydroid_script` exits, `waydroid.sh` prints `All done.` and waits for you to press Enter before returning you to the shell.
+Running `way-fix` with no arguments shows a small, keyboard-driven menu:
+
+```text
+way-fix menu (use WASD, Enter = default, E = exit):
+  [W] Open waydroid_script configuration menu
+  [S] Restart Waydroid container
+  [D] Uninstall way-fix CLI
+  [E] Exit
+```
+
+Controls:
+
+- **W / Enter** – Set up `waydroid_script` under `~/.local/share/waydroid_script` if needed (clone repo, ensure `lzip`, create venv, install `requirements.txt`), then launch its interactive `main.py` menu.
+- **S** – Restart the Waydroid container with `sudo systemctl restart waydroid-container`.
+- **D** – Ask for explicit confirmation before uninstalling the `way-fix` CLI:
+  - Prints a warning with the path it will remove (e.g. `/usr/local/bin/way-fix`).
+  - Prompts: `Type YES in capital letters to uninstall, anything else to cancel:`
+  - Only an exact `YES` will remove the CLI; any other input cancels.
+- **E** – Exit the `way-fix` menu.
+
+Arrow keys are treated as a single invalid keypress (the escape sequence is consumed), and an error message is shown if an unsupported key is pressed.
+
+### Direct commands
 
 - **`way-fix reboot`**
-  - Calls `sudo systemctl restart waydroid-container`.
-  - Useful when Waydroid is already configured and you just want to quickly restart the container.
+  - Calls `sudo systemctl restart waydroid-container` directly.
 
 - **`way-fix config`**
-  - Looks for `waydroid_script` under `~/.local/share/waydroid_script`.
-  - Verifies that the Python virtual environment (`venv/bin/python3`) exists.
-  - If everything is set up, it runs `sudo venv/bin/python3 main.py` in that directory.
-  - This opens the **waydroid_script menu** directly, without touching your Waydroid data or re-running the reset logic.
-  - When you exit the waydroid_script menu, it prints `Configuration session finished.` and returns you to your shell prompt.
+  - Runs the same logic as `[W]` from the menu: ensures `waydroid_script` and its venv are present, then launches `sudo venv/bin/python3 main.py`.
 
 - **`way-fix uninstall`**
-  - Asks for confirmation.
-  - Then removes the `way-fix` script from the path it is running from (for example `/usr/local/bin/way-fix` if you installed it there).
+  - Non-interactive shortcut for removing the `way-fix` script from the path it is running from (for example `/usr/local/bin/way-fix`).
   - If it cannot remove the file with normal permissions, it will attempt to remove it using `sudo`.
 
 ### Assumptions and layout
 
-- `way-fix` assumes `waydroid.sh` and `way-fix` live in the same directory (as in this repo).
-- `way-fix config` expects that:
-  - `waydroid.sh` has already run at least once,
-  - `~/.local/share/waydroid_script` exists, and
-  - the `venv` there has been created and populated via `waydroid.sh`.
+- The deployed `way-fix` wrapper works independently at runtime; `waydroid.sh` is only used to install/update it into `/usr/local/bin/way-fix`.
+- By default, `way-fix` will:
+  - Create or reuse `~/.local/share/waydroid_script`.
+  - Create or reuse the `venv` inside that directory.
+  - Install Python dependencies from `requirements.txt` when needed.
 
-If those assumptions are not met, `way-fix config` will show a clear error message and tell you to run `way-fix` (or `waydroid.sh`) first.
+If `waydroid_script` or its venv are missing, the wrapper will set them up automatically before launching the configuration menu.
 
 ---
 
