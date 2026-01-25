@@ -480,9 +480,9 @@ show_menu() {
     clear 2>/dev/null || printf "\033c"  # clear screen for a cleaner menu
     echo "way-fix menu (use keys in [ ], Enter = default, E = exit):"
     echo "  [W] Open waydroid_script configuration menu"
-    echo "  [Q] Start Waydroid container"
-    echo "  [S] Restart Waydroid container"
-    echo "  [A] Stop Waydroid container"
+    echo -e "  [Q] ${GREEN}Start${NC} Waydroid container"
+    echo -e "  [S] ${YELLOW}Restart${NC} Waydroid container"
+    echo -e "  [A] ${RED}Stop${NC} Waydroid container"
     echo "  [R] View Waydroid logs (last 100 lines)"
     echo "  [D] Uninstall way-fix CLI"
     echo "  [E] Exit"
