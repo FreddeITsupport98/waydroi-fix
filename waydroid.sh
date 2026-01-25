@@ -253,3 +253,6 @@ venv/bin/pip install -r requirements.txt || {
 
 echo -e "\n${GREEN}Launching waydroid_script customization tool...${NC}"
 sudo venv/bin/python3 main.py
+
+echo -e "\n${GREEN}All done.${NC}"
+read -p "Press Enter to exit..." _
