@@ -275,6 +275,12 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
 #
 # Usage:
 #   way-fix              Open waydroid_script menu (and set it up if missing)
+
+# Simple color definitions
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 #   way-fix reboot       Restart Waydroid container service
 #   way-fix config       Open waydroid_script configuration menu (if installed)
 #   way-fix uninstall    Remove this way-fix CLI script
@@ -291,6 +297,38 @@ Usage:
   way-fix uninstall    Remove this way-fix CLI script
   way-fix help         Show this help
 EOF_INNER
+}
+
+start_container_with_progress() {
+  # Avoid double-starting the container
+  local active_state
+  active_state=$(systemctl show -p ActiveState --value waydroid-container 2>/dev/null || echo "unknown")
+  if [[ "$active_state" == "active" ]]; then
+    echo "Waydroid container is already running. Skipping start."
+    sleep 1
+    return
+  elif [[ "$active_state" == "activating" ]]; then
+    echo "Waydroid container is currently starting. Please wait and try again."
+    sleep 1
+    return
+  fi
+
+  echo -n "Starting Waydroid container "
+  sudo systemctl start waydroid-container &>/dev/null &
+  local pid=$!
+  local spinner='|/-\\'
+  local i=0
+  while kill -0 "$pid" 2>/dev/null; do
+    i=$(( (i + 1) % 4 ))
+    printf "\rStarting Waydroid container %s" "${spinner:$i:1}"
+    sleep 0.2
+  done
+  if sudo systemctl is-active --quiet waydroid-container; then
+    printf "\rStarting Waydroid container [DONE]\n"
+  else
+    printf "\rStarting Waydroid container [FAILED]\n"
+  fi
+  sleep 1
 }
 
 restart_container_with_progress() {
@@ -331,7 +369,45 @@ stop_container_with_progress() {
   sleep 1
 }
 
-run_menu() {
+print_container_status() {
+  local active_state sub_state
+  active_state=$(systemctl show -p ActiveState --value waydroid-container 2>/dev/null || echo "unknown")
+  sub_state=$(systemctl show -p SubState --value waydroid-container 2>/dev/null || echo "unknown")
+
+  case "$active_state" in
+    active)
+      echo -e "STATUS: ${GREEN}running${NC} ($sub_state)"
+      ;;
+    activating)
+      echo -e "STATUS: ${YELLOW}starting${NC} ($sub_state)"
+      ;;
+    deactivating)
+      echo -e "STATUS: ${YELLOW}stopping${NC} ($sub_state)"
+      ;;
+    failed)
+      echo -e "STATUS: ${RED}failed${NC} ($sub_state) - press R to view logs"
+      ;;
+    *)
+      echo -e "STATUS: ${YELLOW}stopped${NC} ($sub_state)"
+      ;;
+  esac
+}
+
+view_waydroid_logs() {
+  clear 2>/dev/null || printf "\033c"
+  echo "Waydroid logs (last 100 lines from waydroid-container service):"
+  echo "--------------------------------------------------------------"
+  if command -v journalctl >/dev/null 2>&1; then
+    journalctl -u waydroid-container --no-pager -n 100 2>&1 || echo "No journal entries for waydroid-container."
+  else
+    echo "journalctl not available on this system."
+  fi
+  echo
+  echo "Hint: For in-container logs you can also run: waydroid logcat"
+  read -p "Press Enter to return to the menu..." _
+}
+
+show_menu() {
   WAYDROID_SCRIPT_DIR="$HOME/.local/share/waydroid_script"
 
   if [ ! -d "$WAYDROID_SCRIPT_DIR" ] || [ ! -f "$WAYDROID_SCRIPT_DIR/main.py" ]; then
@@ -402,13 +478,16 @@ run_menu() {
 show_menu() {
   while true; do
     clear 2>/dev/null || printf "\033c"  # clear screen for a cleaner menu
-    echo "way-fix menu (use WASD, Enter = default, E = exit):"
+    echo "way-fix menu (use keys in [ ], Enter = default, E = exit):"
     echo "  [W] Open waydroid_script configuration menu"
+    echo "  [Q] Start Waydroid container"
     echo "  [S] Restart Waydroid container"
     echo "  [A] Stop Waydroid container"
+    echo "  [R] View Waydroid logs (last 100 lines)"
     echo "  [D] Uninstall way-fix CLI"
     echo "  [E] Exit"
-    printf "Press W/S/D/E (Enter = W): "
+    print_container_status
+    printf "Press W/Q/S/A/R/D/E (Enter = W): "
     read -r -n1 choice
 
     # Handle arrow keys (escape sequences like ESC [ A/B/etc.) so they don't spam the menu
@@ -428,11 +507,17 @@ show_menu() {
       "w"|"W" )
         run_menu
         ;;
+      "q"|"Q" )
+        start_container_with_progress
+        ;;
       "s"|"S" )
         restart_container_with_progress
         ;;
       "a"|"A" )
         stop_container_with_progress
+        ;;
+      "r"|"R" )
+        view_waydroid_logs
         ;;
       "d"|"D" )
         echo "This will remove the way-fix CLI at: $0"
@@ -470,6 +555,9 @@ show_menu() {
 case "$1" in
   "" )
     show_menu
+    ;;
+  start )
+    start_container_with_progress
     ;;
   reboot )
     restart_container_with_progress

@@ -209,8 +209,10 @@ At this point you are inside `waydroid_script`'s own interactive menu / command 
 If you accepted the CLI install prompt or manually installed/symlinked `way-fix` into your `$PATH`, you can use:
 
 ```bash
-way-fix              # open interactive WASD-style menu for common actions
-way-fix reboot       # restart Waydroid container (shortcut)
+way-fix              # open interactive menu for common actions
+way-fix start        # start Waydroid container with progress spinner
+way-fix reboot       # restart Waydroid container with progress spinner
+way-fix shutdown     # stop Waydroid container with progress spinner
 way-fix config       # directly open waydroid_script configuration menu
 way-fix uninstall    # remove the way-fix CLI script itself
 ```
@@ -220,29 +222,42 @@ way-fix uninstall    # remove the way-fix CLI script itself
 Running `way-fix` with no arguments shows a small, keyboard-driven menu:
 
 ```text
-way-fix menu (use WASD, Enter = default, E = exit):
+way-fix menu (use keys in [ ], Enter = default, E = exit):
   [W] Open waydroid_script configuration menu
+  [Q] Start Waydroid container
   [S] Restart Waydroid container
+  [A] Stop Waydroid container
+  [R] View Waydroid logs (last 100 lines)
   [D] Uninstall way-fix CLI
   [E] Exit
-```
-
+STATUS: running (running)   # colored green in a real terminal
+Press W/Q/S/A/R/D/E (Enter = W):
 Controls:
 
 - **W / Enter** – Set up `waydroid_script` under `~/.local/share/waydroid_script` if needed (clone repo, ensure `lzip`, create venv, install `requirements.txt`), then launch its interactive `main.py` menu.
-- **S** – Restart the Waydroid container with `sudo systemctl restart waydroid-container`.
+- **Q** – Start the Waydroid container. Shows a small spinner animation and a final `[DONE]` / `[FAILED]` status, with a short delay before returning to the menu. If the container is already running or in the middle of starting, it prints a message and does not start again.
+- **S** – Restart the Waydroid container with the same spinner + `[DONE]` / `[FAILED]` + delay.
+- **A** – Stop the Waydroid container with the same spinner + `[DONE]` / `[FAILED]` + delay.
+- **R** – Show debug logs: clears the screen and prints the last 100 lines from `journalctl -u waydroid-container`, plus a hint about `waydroid logcat`.
 - **D** – Ask for explicit confirmation before uninstalling the `way-fix` CLI:
   - Prints a warning with the path it will remove (e.g. `/usr/local/bin/way-fix`).
   - Prompts: `Type YES in capital letters to uninstall, anything else to cancel:`
   - Only an exact `YES` will remove the CLI; any other input cancels.
 - **E** – Exit the `way-fix` menu.
 
-Arrow keys are treated as a single invalid keypress (the escape sequence is consumed), and an error message is shown if an unsupported key is pressed.
+The `STATUS:` line under the menu is color coded in a real terminal: green for running, yellow for starting/stopping/stopped, red for failed (with a hint to press `R`). Arrow keys are treated as a single invalid keypress (the escape sequence is consumed), and an error message is shown if an unsupported key is pressed.
 
 ### Direct commands
 
+- **`way-fix start`**
+  - Starts the Waydroid container with the same spinner / `[DONE]` / `[FAILED]` behavior used in the menu.
+  - If the container is already **active** or **activating**, it prints a message and exits without trying to start again.
+
 - **`way-fix reboot`**
-  - Calls `sudo systemctl restart waydroid-container` directly.
+  - Restarts the Waydroid container with a spinner and final status.
+
+- **`way-fix shutdown`**
+  - Stops the Waydroid container with a spinner and final status.
 
 - **`way-fix config`**
   - Runs the same logic as `[W]` from the menu: ensures `waydroid_script` and its venv are present, then launches `sudo venv/bin/python3 main.py`.
