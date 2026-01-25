@@ -222,6 +222,7 @@ echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
     SRC_WAY_FIX="${SCRIPT_DIR}/way-fix"
+    SRC_WAYDROID_FIX="${SCRIPT_DIR}/waydroid.sh"
     if [ -f "${SRC_WAY_FIX}" ]; then
         echo "Installing way-fix to /usr/local/bin/way-fix..."
         sudo install -m 0755 "${SRC_WAY_FIX}" /usr/local/bin/way-fix || {
@@ -229,6 +230,14 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         }
     else
         echo -e "${YELLOW}way-fix script not found next to waydroid.sh; skipping CLI install.${NC}"
+    fi
+    if [ -f "${SRC_WAYDROID_FIX}" ]; then
+        echo "Installing waydroid.sh to /usr/local/bin/waydroid.sh..."
+        sudo install -m 0755 "${SRC_WAYDROID_FIX}" /usr/local/bin/waydroid.sh || {
+            echo -e "${YELLOW}Warning: failed to install waydroid.sh. You may need to run it from the repository path or install it manually.${NC}"
+        }
+    else
+        echo -e "${YELLOW}waydroid.sh not found; skipping installation of global waydroid.sh copy.${NC}"
     fi
 else
     echo "Skipping installation of way-fix CLI."
