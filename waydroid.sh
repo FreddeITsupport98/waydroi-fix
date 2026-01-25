@@ -44,7 +44,14 @@ if ! command -v waydroid >/dev/null 2>&1; then
         if [ -n "${PKG_INSTALL_CMD}" ]; then
             echo "Running: ${PKG_INSTALL_CMD}"
             if ! eval "${PKG_INSTALL_CMD}"; then
-                echo -e "${RED}Failed to install Waydroid. Please install it manually and re-run this script.${NC}"
+                if [ -r /etc/os-release ]; then
+                    . /etc/os-release
+                fi
+                if [[ "${ID}" == "debian" || "${ID}" == "ubuntu" || "${ID}" == "linuxmint" || "${ID}" == "pop" ]]; then
+                    echo -e "${RED}Failed to install Waydroid. The package manager may be locked (e.g. unattended-upgrades). Please wait a bit and re-run this script.${NC}"
+                else
+                    echo -e "${RED}Failed to install Waydroid. Please install it manually and re-run this script.${NC}"
+                fi
                 exit 1
             fi
         else
@@ -152,11 +159,24 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
         DEFAULT_IFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
         echo -e "Detected Primary Network Interface: ${GREEN}$DEFAULT_IFACE${NC}"
 
-        # Apply NAT Masquerade (Since you have no firewalld)
-        # We check if nftables or iptables is present
+        # Apply NAT Masquerade
+        # First add a temporary iptables rule for this session, then try to persist it via firewalld/ufw when available
         if command -v iptables &> /dev/null; then
             echo "Adding Masquerade rule via iptables..."
-            iptables -t nat -A POSTROUTING -o $DEFAULT_IFACE -j MASQUERADE
+            iptables -t nat -A POSTROUTING -o "$DEFAULT_IFACE" -j MASQUERADE
+
+            # Try to make networking persistent using a firewall manager
+            if command -v firewall-cmd &> /dev/null; then
+                echo "Detected firewalld; adding waydroid0 to trusted zone (permanent)..."
+                firewall-cmd --permanent --zone=trusted --add-interface=waydroid0 || \
+                    echo -e "${YELLOW}Warning: failed to add waydroid0 to firewalld trusted zone.${NC}"
+                firewall-cmd --reload || \
+                    echo -e "${YELLOW}Warning: failed to reload firewalld. You may need to reload it manually.${NC}"
+            elif command -v ufw &> /dev/null; then
+                echo "Detected ufw; allowing routed traffic from waydroid0 to $DEFAULT_IFACE..."
+                ufw route allow in on waydroid0 out on "$DEFAULT_IFACE" || \
+                    echo -e "${YELLOW}Warning: failed to add persistent ufw route rule. You may need to configure ufw manually.${NC}"
+            fi
         else
             echo -e "${RED}Warning: iptables not found. Internet might not work immediately.${NC}"
         fi
@@ -482,6 +502,12 @@ EOF
     sudo chmod 0755 /usr/local/bin/way-fix || {
         echo -e "${YELLOW}Warning: failed to chmod /usr/local/bin/way-fix. You may need to fix permissions manually.${NC}"
     }
+
+    # Let the user know where way-fix was installed and warn if /usr/local/bin is not in PATH
+    echo "way-fix CLI installed to /usr/local/bin/way-fix."
+    if ! echo ":$PATH:" | grep -q ':/usr/local/bin:'; then
+        echo -e "${YELLOW}Note: /usr/local/bin is not in your PATH. You may need to add it or call 'sudo /usr/local/bin/way-fix'.${NC}"
+    fi
 else
     echo "Skipping installation of way-fix CLI."
 fi
@@ -489,7 +515,12 @@ fi
 # --- 6. OPTIONAL CUSTOMIZATION VIA waydroid_script ---
 echo -e "\n${YELLOW}[Optional] Setting up waydroid_script customization helper...${NC}"
 
-WAYDROID_SCRIPT_DIR="${HOME}/.local/share/waydroid_script"
+# Use the invoking user's home directory for waydroid_script (not root's)
+USER_HOME_FOR_SCRIPT="$HOME"
+if [[ -n "$SUDO_USER" && "$SUDO_USER" != "root" ]]; then
+    USER_HOME_FOR_SCRIPT="$(eval echo "~$SUDO_USER")"
+fi
+WAYDROID_SCRIPT_DIR="${USER_HOME_FOR_SCRIPT}/.local/share/waydroid_script"
 
 if [ -d "${WAYDROID_SCRIPT_DIR}/.git" ] && [ -f "${WAYDROID_SCRIPT_DIR}/main.py" ]; then
     echo "Using existing waydroid_script in ${WAYDROID_SCRIPT_DIR}"
@@ -539,10 +570,18 @@ if ! command -v lzip >/dev/null 2>&1; then
 
     if [ -n "${PKG_CMD}" ]; then
         echo "Running: ${PKG_CMD}"
-        eval "${PKG_CMD}" || {
-            echo -e "${RED}Failed to install 'lzip'. Please install it manually and rerun this script.${NC}"
+        eval "${PKG_CMD}"
+        if [ $? -ne 0 ]; then
+            if [ -r /etc/os-release ]; then
+                . /etc/os-release
+            fi
+            if [[ "${ID}" == "debian" || "${ID}" == "ubuntu" || "${ID}" == "linuxmint" || "${ID}" == "pop" ]]; then
+                echo -e "${RED}Failed to install 'lzip'. The package manager may be locked (e.g. unattended-upgrades). Please wait and rerun this script.${NC}"
+            else
+                echo -e "${RED}Failed to install 'lzip'. Please install it manually and rerun this script.${NC}"
+            fi
             exit 1
-        }
+        fi
     else
         echo -e "${RED}Could not determine package manager to install 'lzip'. Please install it manually and rerun this script.${NC}"
         exit 1
@@ -565,6 +604,11 @@ venv/bin/pip install -r requirements.txt || {
     echo -e "${RED}Failed to install Python dependencies for waydroid_script.${NC}"
     exit 1
 }
+
+# Ensure the waydroid_script directory is owned by the invoking user when running under sudo
+if [[ -n "$SUDO_USER" && "$SUDO_USER" != "root" && -d "${WAYDROID_SCRIPT_DIR}" ]]; then
+    chown -R "$SUDO_USER":"$SUDO_USER" "${WAYDROID_SCRIPT_DIR}" || echo -e "${YELLOW}Warning: failed to adjust ownership for ${WAYDROID_SCRIPT_DIR}.${NC}"
+fi
 
 echo -e "\n${GREEN}Launching waydroid_script customization tool...${NC}"
 sudo venv/bin/python3 main.py
