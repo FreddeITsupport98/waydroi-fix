@@ -134,17 +134,17 @@ if [[ $DO_RESET -eq 1 ]]; then
 
         # --- 3. INITIALIZATION PHASE ---
         echo -e "\n${YELLOW}[3/5] Downloading Android Images...${NC}"
-        echo "Select Android Type:"
-        echo "1) GAPPS (With Google Play Store) - Recommended"
-        echo "2) VANILLA (No Google Apps)"
-        read -p "Enter 1 or 2: " choice
+        echo "Do you want to use a GAPPS base image (with Google Play Store)?"
+        read -p "Install GAPPS base image? (y/n): " -n 1 -r
+        echo
 
-        TYPE="GAPPS"
-        if [ "$choice" == "2" ]; then
-            TYPE="VANILLA"
+        TYPE="VANILLA"
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            TYPE="GAPPS"
         fi
 
-        echo -e "Downloading ${GREEN}$TYPE${NC} images. Please wait, this may take a while..."
+        echo -e "Selected base image: ${GREEN}$TYPE${NC}"
+        echo -e "Downloading ${GREEN}$TYPE${NC} images. Please wait, this may take a while..."\
 
         # We manually specify URLs to avoid the "OTA URL" error you saw earlier
         waydroid init -s $TYPE -f -c https://ota.waydro.id/system -v https://ota.waydro.id/vendor
