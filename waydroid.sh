@@ -312,6 +312,25 @@ restart_container_with_progress() {
   sleep 1
 }
 
+stop_container_with_progress() {
+  echo -n "Stopping Waydroid container "
+  sudo systemctl stop waydroid-container &>/dev/null &
+  local pid=$!
+  local spinner='|/-\\'
+  local i=0
+  while kill -0 "$pid" 2>/dev/null; do
+    i=$(( (i + 1) % 4 ))
+    printf "\rStopping Waydroid container %s" "${spinner:$i:1}"
+    sleep 0.2
+  done
+  if ! sudo systemctl is-active --quiet waydroid-container; then
+    printf "\rStopping Waydroid container [DONE]\n"
+  else
+    printf "\rStopping Waydroid container [FAILED]\n"
+  fi
+  sleep 1
+}
+
 run_menu() {
   WAYDROID_SCRIPT_DIR="$HOME/.local/share/waydroid_script"
 
@@ -386,6 +405,7 @@ show_menu() {
     echo "way-fix menu (use WASD, Enter = default, E = exit):"
     echo "  [W] Open waydroid_script configuration menu"
     echo "  [S] Restart Waydroid container"
+    echo "  [A] Stop Waydroid container"
     echo "  [D] Uninstall way-fix CLI"
     echo "  [E] Exit"
     printf "Press W/S/D/E (Enter = W): "
@@ -410,6 +430,9 @@ show_menu() {
         ;;
       "s"|"S" )
         restart_container_with_progress
+        ;;
+      "a"|"A" )
+        stop_container_with_progress
         ;;
       "d"|"D" )
         echo "This will remove the way-fix CLI at: $0"
@@ -450,6 +473,9 @@ case "$1" in
     ;;
   reboot )
     restart_container_with_progress
+    ;;
+  shutdown )
+    stop_container_with_progress
     ;;
   config )
     WAYDROID_SCRIPT_DIR="$HOME/.local/share/waydroid_script"
