@@ -331,17 +331,30 @@ run_menu() {
 
 show_menu() {
   while true; do
-    echo
+    clear 2>/dev/null || printf "\033c"  # clear screen for a cleaner menu
     echo "way-fix menu (use WASD, Enter = default, E = exit):"
     echo "  [W] Open waydroid_script configuration menu"
     echo "  [S] Restart Waydroid container"
     echo "  [D] Uninstall way-fix CLI"
     echo "  [E] Exit"
     printf "Press W/S/D/E (Enter = W): "
-    read -n1 -r choice
+    read -r -n1 choice
+
+    # Handle arrow keys (escape sequences like ESC [ A/B/etc.) so they don't spam the menu
+    if [[ "$choice" == $'\e' ]]; then
+      # Consume the rest of the escape sequence if present
+      read -r -n2 -t 0.05 _ 2>/dev/null || true
+      choice="?"  # treat as invalid once
+    fi
+
+    # If user just pressed Enter, default to W
+    if [[ -z "$choice" ]]; then
+      choice="w"
+    fi
+
     echo
     case "$choice" in
-      ""|"w"|"W" )
+      "w"|"W" )
         run_menu
         ;;
       "s"|"S" )
