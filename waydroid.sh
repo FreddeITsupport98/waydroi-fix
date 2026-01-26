@@ -227,10 +227,74 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
         fi
 
         echo -e "Selected base image: ${GREEN}$TYPE${NC}"
-        echo -e "Downloading ${GREEN}$TYPE${NC} images. Please wait, this may take a while..."\
 
-        # We manually specify URLs to avoid the "OTA URL" error you saw earlier
-        waydroid init -s $TYPE -f -c https://ota.waydro.id/system -v https://ota.waydro.id/vendor
+        if [[ "$TYPE" == "GAPPS" ]]; then
+            echo -e "${YELLOW}Using aria2c (x16, s16) to download GAPPS images from SourceForge with nearest-mirror autoselect...${NC}"
+
+            if ! command -v aria2c >/dev/null 2>&1; then
+                echo -e "${RED}aria2c is not installed but is required for this download mode.${NC}"
+                echo "Please install 'aria2c' (aria2 package) and re-run the script, or choose VANILLA to use the built-in downloader."
+                exit 1
+            fi
+
+            SYS_URL="https://sourceforge.net/projects/waydroid/files/images/system/lineage/waydroid_x86_64/lineage-20.0-20250809-GAPPS-waydroid_x86_64-system.zip/download"
+            VEN_URL="https://sourceforge.net/projects/waydroid/files/images/vendor/waydroid_x86_64/lineage-20.0-20250809-mainline-waydroid_x86_64-vendor.zip/download"
+
+            TS=$(date +%s)
+            SYS_FAST="${SYS_URL}?ts=${TS}&use_mirror=autoselect"
+            VEN_FAST="${VEN_URL}?ts=${TS}&use_mirror=autoselect"
+
+            DOWNLOAD_DIR="/var/lib/waydroid/downloads"
+            mkdir -p "$DOWNLOAD_DIR" || {
+                echo -e "${RED}Failed to create download directory at $DOWNLOAD_DIR.${NC}"
+                exit 1
+            }
+
+            echo -e "${YELLOW}Downloading GAPPS system image with aria2c...${NC}"
+            aria2c -x 16 -s 16 -d "$DOWNLOAD_DIR" -o system.zip "$SYS_FAST" || {
+                echo -e "${RED}Failed to download system ZIP with aria2c.${NC}"
+                exit 1
+            }
+
+            echo -e "${YELLOW}Downloading GAPPS vendor image with aria2c...${NC}"
+            aria2c -x 16 -s 16 -d "$DOWNLOAD_DIR" -o vendor.zip "$VEN_FAST" || {
+                echo -e "${RED}Failed to download vendor ZIP with aria2c.${NC}"
+                exit 1
+            }
+
+            CUSTOM_IMAGES_DIR="/etc/waydroid-extra/images"
+            echo -e "${YELLOW}Preparing images in ${CUSTOM_IMAGES_DIR}...${NC}"
+            mkdir -p "$CUSTOM_IMAGES_DIR" || {
+                echo -e "${RED}Failed to create $CUSTOM_IMAGES_DIR.${NC}"
+                exit 1
+            }
+
+            if ! command -v unzip >/dev/null 2>&1; then
+                echo -e "${YELLOW}'unzip' is not installed. Please install it and re-run the script, or extract the ZIPs manually into ${CUSTOM_IMAGES_DIR}.${NC}"
+                exit 1
+            fi
+
+            unzip -o "$DOWNLOAD_DIR/system.zip" -d "$CUSTOM_IMAGES_DIR" || {
+                echo -e "${RED}Failed to extract system ZIP into $CUSTOM_IMAGES_DIR.${NC}"
+                exit 1
+            }
+
+            unzip -o "$DOWNLOAD_DIR/vendor.zip" -d "$CUSTOM_IMAGES_DIR" || {
+                echo -e "${RED}Failed to extract vendor ZIP into $CUSTOM_IMAGES_DIR.${NC}"
+                exit 1
+            }
+
+            rm -f "$DOWNLOAD_DIR/system.zip" "$DOWNLOAD_DIR/vendor.zip"
+
+            echo -e "${YELLOW}Initializing Waydroid from local GAPPS images in ${CUSTOM_IMAGES_DIR}...${NC}"
+            waydroid init -f
+        else
+            echo -e "Downloading ${GREEN}$TYPE${NC} images with aria2c (x16, s16) via Waydroid OTA. Please wait, this may take a while..."\
+
+            # Use aria2c as the download tool for Waydroid image downloads via OTA
+            WAYDROID_DOWNLOAD_TOOL="aria2c -x 16 -s 16" \
+            waydroid init -s "$TYPE" -f -c https://ota.waydro.id/system -v https://ota.waydro.id/vendor
+        fi
 
         if [ $? -ne 0 ]; then
             echo -e "${RED}Download failed! Please check your internet connection.${NC}"
