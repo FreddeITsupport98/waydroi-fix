@@ -64,6 +64,39 @@ declare -A WAYDROID_MIRRORS=(
 # Selected mirror code for this run (empty = auto/select best at SF side)
 WAYDROID_SELECTED_MIRROR_CODE=""
 
+ensure_aria2c() {
+    if command -v aria2c >/dev/null 2>&1; then
+        return 0
+    fi
+    echo -e "${YELLOW}aria2c is not installed. Attempting to install it now...${NC}"
+    local ARIA2C_CMD=""
+    if [ -r /etc/os-release ]; then
+        . /etc/os-release
+        case "${ID}" in
+            fedora|rhel|rocky|centos)
+                ARIA2C_CMD="sudo dnf install -y aria2" ;;
+            debian|ubuntu|linuxmint|pop)
+                ARIA2C_CMD="sudo apt install -y aria2" ;;
+            arch|manjaro|endeavouros)
+                ARIA2C_CMD="sudo pacman -S --noconfirm aria2" ;;
+            opensuse*|suse|sles)
+                ARIA2C_CMD="sudo zypper install -y aria2" ;;
+            *)
+                ARIA2C_CMD="" ;;
+        esac
+    fi
+    if [ -n "${ARIA2C_CMD}" ]; then
+        echo "Running: ${ARIA2C_CMD}"
+        if ! eval "${ARIA2C_CMD}"; then
+            echo -e "${RED}Failed to install aria2c automatically. Please install the 'aria2' package manually and rerun this script.${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${RED}Could not determine package manager to install aria2c. Please install the 'aria2' package manually and rerun this script.${NC}"
+        exit 1
+    fi
+}
+
 waydroid_get_latest_filename() {
     local base_url="$1"      # directory listing URL
     local pattern="$2"       # grep pattern for file name
@@ -373,19 +406,41 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
             exit 1
         }
 
-        echo -e "${YELLOW}Downloading Waydroid images to ${DL_DIR}...${NC}"
+        # Ensure aria2c is available for multi-threaded downloads
+        ensure_aria2c
+
+        # Browser-like User-Agent and referer to avoid 403/anti-leech
+        UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+        echo -e "${YELLOW}Downloading Waydroid images to ${DL_DIR} with aria2c (x16, s16)...${NC}"
 
         echo "Downloading System image..."
-        wget -O "${DL_DIR}/${SYS_FILE}" "$SYS_DL_URL" --show-progress || {
-            echo -e "${RED}Failed to download system image from SourceForge.${NC}"
-            exit 1
-        }
+        if ! aria2c -x 16 -s 16 \
+                 --user-agent="$UA" \
+                 --referer="https://sourceforge.net/" \
+                 --check-certificate=false \
+                 --max-file-not-found=3 \
+                 -o "${SYS_FILE}" -d "$DL_DIR" "$SYS_DL_URL"; then
+            echo -e "${YELLOW}aria2c failed for system image. Falling back to single-stream wget...${NC}"
+            if ! wget -c -O "${DL_DIR}/${SYS_FILE}" "$SYS_DL_URL" --show-progress; then
+                echo -e "${RED}Failed to download system image from SourceForge (aria2c and wget both failed).${NC}"
+                exit 1
+            fi
+        fi
 
         echo "Downloading Vendor image..."
-        wget -O "${DL_DIR}/${VEN_FILE}" "$VEN_DL_URL" --show-progress || {
-            echo -e "${RED}Failed to download vendor image from SourceForge.${NC}"
-            exit 1
-        }
+        if ! aria2c -x 16 -s 16 \
+                 --user-agent="$UA" \
+                 --referer="https://sourceforge.net/" \
+                 --check-certificate=false \
+                 --max-file-not-found=3 \
+                 -o "${VEN_FILE}" -d "$DL_DIR" "$VEN_DL_URL"; then
+            echo -e "${YELLOW}aria2c failed for vendor image. Falling back to single-stream wget...${NC}"
+            if ! wget -c -O "${DL_DIR}/${VEN_FILE}}" "$VEN_DL_URL" --show-progress; then
+                echo -e "${RED}Failed to download vendor image from SourceForge (aria2c and wget both failed).${NC}"
+                exit 1
+            fi
+        fi
 
         # 3.3 Initialize Waydroid from the downloaded ZIPs
         echo -e "${YELLOW}Initializing Waydroid from locally downloaded images...${NC}"
