@@ -8,9 +8,8 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # --- Mirror-aware downloader config for Waydroid images ---
-# Default architecture and Android version used on SourceForge paths
+# Default architecture used on SourceForge paths
 WAYDROID_ARCH="x86_64"
-WAYDROID_ANDROID_VER="lineage-20"  # Note: SourceForge uses lineage-20, not lineage-20.0
 
 # SourceForge mirror codes to benchmark (key = label, value = mirror code or empty for auto)
 # See https://sourceforge.net/p/forge/documentation/Mirrors/
@@ -73,24 +72,25 @@ waydroid_get_latest_filename() {
     local pattern="$2"       # grep pattern for file name
     local label="$3"         # human label for logs
 
-    echo -e "${YELLOW}Resolving latest ${label} image from SourceForge...${NC}"
-    echo "  URL: $base_url"
+    # Log to stderr so callers can safely capture just the filename via $(...) 
+    echo -e "${YELLOW}Resolving latest ${label} image from SourceForge...${NC}" >&2
+    echo "  URL: $base_url" >&2
 
     local filename
     # SourceForge HTML contains lines like:
-    # <a href="/projects/waydroid/files/.../lineage-20-20250503-GAPPS-waydroid_x86_64-system.zip" ...>
+    # <a href="/projects/waydroid/files/.../lineage-20.0-20250809-GAPPS-waydroid_x86_64-system.zip" ...>
     filename=$(curl -sL "$base_url" \
         | grep -oP '(?<=href=")/projects/waydroid/files/[^"]*\.zip(?=")' \
+        | sed 's|.*/||' \
         | grep -E "$pattern" \
-        | head -n 1 \
-        | sed 's|.*/||')
+        | head -n 1)
 
     if [[ -z "$filename" ]]; then
-        echo -e "${RED}Failed to resolve latest $label image with pattern: $pattern${NC}"
+        echo -e "${RED}Failed to resolve latest $label image with pattern: $pattern${NC}" >&2
         exit 1
     fi
 
-    echo "  -> found: $filename"
+    echo "  -> found: $filename" >&2
     echo "$filename"
 }
 
@@ -325,9 +325,14 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
         SYS_BASE_URL="https://sourceforge.net/projects/waydroid/files/images/system/lineage/waydroid_${WAYDROID_ARCH}/"
         VEN_BASE_URL="https://sourceforge.net/projects/waydroid/files/images/vendor/waydroid_${WAYDROID_ARCH}/"
 
-        # 3.1 Resolve latest filenames for chosen TYPE and MAINLINE vendor (no mirror bias)
-        SYS_PATTERN="${WAYDROID_ANDROID_VER}.*${TYPE}"
-        VEN_PATTERN="${WAYDROID_ANDROID_VER}.*MAINLINE"
+        # 3.2 Resolve latest filenames for chosen TYPE and MAINLINE vendor
+        # Auto-detect latest *any* lineage version for this arch, e.g.:
+        #   lineage-20.0-20250809-GAPPS-waydroid_x86_64-system.zip
+        #   lineage-18.1-20230805-GAPPS-waydroid_x86_64-system.zip
+        #   lineage-20.0-20250803-MAINLINE-waydroid_x86_64-vendor.zip
+        # We rely on SourceForge listing newest first, then pick the first match.
+        SYS_PATTERN="^lineage-[0-9.]+-.*${TYPE}-waydroid_${WAYDROID_ARCH}-system\\.zip$"
+        VEN_PATTERN="^lineage-[0-9.]+-.*MAINLINE-waydroid_${WAYDROID_ARCH}-vendor\\.zip$"
 
         SYS_FILE=$(waydroid_get_latest_filename "$SYS_BASE_URL" "$SYS_PATTERN" "System")
         VEN_FILE=$(waydroid_get_latest_filename "$VEN_BASE_URL" "$VEN_PATTERN" "Vendor")
