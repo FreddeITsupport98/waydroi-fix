@@ -77,17 +77,17 @@ waydroid_get_latest_filename() {
     echo "  URL: $base_url" >&2
 
     local filename
-    # SourceForge HTML contains lines like:
-    # <a href="/projects/waydroid/files/.../lineage-20.0-20250809-GAPPS-waydroid_x86_64-system.zip" ...>
+    # The plain HTML listing contains bare filenames like:
+    #   lineage-20.0-20250809-GAPPS-waydroid_x86_64-system.zip
+    #   lineage-20.0-20250803-MAINLINE-waydroid_x86_64-vendor.zip
     filename=$(curl -sL "$base_url" \
-        | grep -oP '(?<=href=")/projects/waydroid/files/[^"]*\.zip(?=")' \
-        | sed 's|.*/||' \
+        | grep -oE 'lineage-[0-9.]+-[0-9]{8}-[A-Za-z0-9_]+-waydroid_'"$WAYDROID_ARCH"'-[a-z]+\.zip' \
         | grep -E "$pattern" \
         | head -n 1)
 
     if [[ -z "$filename" ]]; then
         echo -e "${RED}Failed to resolve latest $label image with pattern: $pattern${NC}" >&2
-        exit 1
+        return 1
     fi
 
     echo "  -> found: $filename" >&2
@@ -334,8 +334,13 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
         SYS_PATTERN="^lineage-[0-9.]+-.*${TYPE}-waydroid_${WAYDROID_ARCH}-system\\.zip$"
         VEN_PATTERN="^lineage-[0-9.]+-.*MAINLINE-waydroid_${WAYDROID_ARCH}-vendor\\.zip$"
 
-        SYS_FILE=$(waydroid_get_latest_filename "$SYS_BASE_URL" "$SYS_PATTERN" "System")
-        VEN_FILE=$(waydroid_get_latest_filename "$VEN_BASE_URL" "$VEN_PATTERN" "Vendor")
+        SYS_FILE=$(waydroid_get_latest_filename "$SYS_BASE_URL" "$SYS_PATTERN" "System") || SYS_FILE=""
+        VEN_FILE=$(waydroid_get_latest_filename "$VEN_BASE_URL" "$VEN_PATTERN" "Vendor") || VEN_FILE=""
+
+        if [[ -z "$SYS_FILE" || -z "$VEN_FILE" ]]; then
+            echo -e "${RED}Could not determine latest system/vendor images from SourceForge. Aborting download step.${NC}"
+            exit 1
+        fi
 
         # 3.2 Benchmark mirrors once using the actual system ZIP (10MiB partial download)
         SYS_TEST_URL="${SYS_BASE_URL}${SYS_FILE}/download"
