@@ -28,12 +28,13 @@ declare -A WAYDROID_MIRRORS=(
 WAYDROID_BEST_MIRROR_CODE=""
 
 waydroid_benchmark_mirrors() {
-    local test_url="$1"  # e.g. system directory listing URL
+    local test_url="$1"  # full /download URL without ?use_mirror
     local best_label=""
     local best_code=""
     local best_time=""
+    local bytes_to_test=$((10 * 1024 * 1024))  # 10 MiB
 
-    echo -e "${YELLOW}Benchmarking SourceForge mirrors for Waydroid images...${NC}"
+    echo -e "${YELLOW}Benchmarking SourceForge mirrors (10MiB throughput test)...${NC}"
 
     for label in "${!WAYDROID_MIRRORS[@]}"; do
         local code="${WAYDROID_MIRRORS[$label]}"
@@ -42,13 +43,14 @@ waydroid_benchmark_mirrors() {
 
         echo "  > Testing ${label} (${code:-auto})"
         local t
-        t=$(curl -m 5 -s -w '%{time_total}' -o /dev/null "$url" || echo "inf")
+        t=$(curl -L -m 40 -s --range 0-$((bytes_to_test - 1)) \
+              -w '%{time_total}' -o /dev/null "$url" || echo "inf")
 
         if [[ "$t" == "inf" ]]; then
             echo "    - mirror failed or timed out"
             continue
         fi
-        printf '    - time: %0.3fs\n' "$t"
+        printf '    - time for 10MiB: %0.3fs\n' "$t"
 
         if [[ -z "$best_time" || $(echo "$t < $best_time" | bc -l 2>/dev/null || echo 0) -eq 1 ]]; then
             best_time="$t"
@@ -61,7 +63,7 @@ waydroid_benchmark_mirrors() {
         echo -e "${YELLOW}All mirror tests failed, falling back to SourceForge auto-select.${NC}"
         WAYDROID_BEST_MIRROR_CODE=""
     else
-        echo -e "${GREEN}Fastest mirror: ${best_label} (${best_code:-auto}) [${best_time}s]${NC}"
+        echo -e "${GREEN}Fastest mirror: ${best_label} (${best_code:-auto}) [${best_time}s for 10MiB]${NC}"
         WAYDROID_BEST_MIRROR_CODE="$best_code"
     fi
 }
@@ -323,20 +325,21 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
         SYS_BASE_URL="https://sourceforge.net/projects/waydroid/files/images/system/lineage/waydroid_${WAYDROID_ARCH}/"
         VEN_BASE_URL="https://sourceforge.net/projects/waydroid/files/images/vendor/waydroid_${WAYDROID_ARCH}/"
 
-        # 3.1 Benchmark mirrors once (using system dir as probe)
-        waydroid_benchmark_mirrors "$SYS_BASE_URL"
-
-        MIRROR_SUFFIX=""
-        if [[ -n "$WAYDROID_BEST_MIRROR_CODE" ]]; then
-            MIRROR_SUFFIX="?use_mirror=${WAYDROID_BEST_MIRROR_CODE}"
-        fi
-
-        # 3.2 Resolve latest filenames for chosen TYPE and MAINLINE vendor
+        # 3.1 Resolve latest filenames for chosen TYPE and MAINLINE vendor (no mirror bias)
         SYS_PATTERN="${WAYDROID_ANDROID_VER}.*${TYPE}"
         VEN_PATTERN="${WAYDROID_ANDROID_VER}.*MAINLINE"
 
         SYS_FILE=$(waydroid_get_latest_filename "$SYS_BASE_URL" "$SYS_PATTERN" "System")
         VEN_FILE=$(waydroid_get_latest_filename "$VEN_BASE_URL" "$VEN_PATTERN" "Vendor")
+
+        # 3.2 Benchmark mirrors once using the actual system ZIP (10MiB partial download)
+        SYS_TEST_URL="${SYS_BASE_URL}${SYS_FILE}/download"
+        waydroid_benchmark_mirrors "$SYS_TEST_URL"
+
+        MIRROR_SUFFIX=""
+        if [[ -n "$WAYDROID_BEST_MIRROR_CODE" ]]; then
+            MIRROR_SUFFIX="?use_mirror=${WAYDROID_BEST_MIRROR_CODE}"
+        fi
 
         SYS_DL_URL="${SYS_BASE_URL}${SYS_FILE}/download${MIRROR_SUFFIX}"
         VEN_DL_URL="${VEN_BASE_URL}${VEN_FILE}/download${MIRROR_SUFFIX}"
