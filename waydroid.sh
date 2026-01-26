@@ -7,6 +7,88 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# --- Mirror-aware downloader config for Waydroid images ---
+# Default architecture and Android version used on SourceForge paths
+WAYDROID_ARCH="x86_64"
+WAYDROID_ANDROID_VER="lineage-20.0"
+
+# SourceForge mirror codes to benchmark (key = label, value = mirror code or empty for auto)
+declare -A WAYDROID_MIRRORS=(
+    ["Auto-Select (Default)"]=""
+    ["US - Cytranet (Chicago)"]="cytranet"
+    ["US - Eweka (New York)"]="eweka"
+    ["EU - NetCologne (Germany)"]="netcologne"
+    ["EU - Umeå University (Sweden)"]="umu"
+    ["EU - DEAC (Latvia)"]="deac-riga"
+    ["Asia - JAIST (Japan)"]="jaist"
+    ["SA - UFSCar (Brazil)"]="ufscar"
+)
+
+WAYDROID_BEST_MIRROR_CODE=""
+
+waydroid_benchmark_mirrors() {
+    local test_url="$1"  # e.g. system directory listing URL
+    local best_label=""
+    local best_code=""
+    local best_time=""
+
+    echo -e "${YELLOW}Benchmarking SourceForge mirrors for Waydroid images...${NC}"
+
+    for label in "${!WAYDROID_MIRRORS[@]}"; do
+        local code="${WAYDROID_MIRRORS[$label]}"
+        local url="$test_url"
+        [[ -n "$code" ]] && url+="?use_mirror=${code}"
+
+        echo "  > Testing ${label} (${code:-auto})"
+        local t
+        t=$(curl -m 5 -s -w '%{time_total}' -o /dev/null "$url" || echo "inf")
+
+        if [[ "$t" == "inf" ]]; then
+            echo "    - mirror failed or timed out"
+            continue
+        fi
+        printf '    - time: %0.3fs\n' "$t"
+
+        if [[ -z "$best_time" || $(echo "$t < $best_time" | bc -l 2>/dev/null || echo 0) -eq 1 ]]; then
+            best_time="$t"
+            best_label="$label"
+            best_code="$code"
+        fi
+    done
+
+    if [[ -z "$best_label" ]]; then
+        echo -e "${YELLOW}All mirror tests failed, falling back to SourceForge auto-select.${NC}"
+        WAYDROID_BEST_MIRROR_CODE=""
+    else
+        echo -e "${GREEN}Fastest mirror: ${best_label} (${best_code:-auto}) [${best_time}s]${NC}"
+        WAYDROID_BEST_MIRROR_CODE="$best_code"
+    fi
+}
+
+waydroid_get_latest_filename() {
+    local base_url="$1"      # directory listing URL
+    local pattern="$2"       # grep pattern for file name
+    local label="$3"         # human label for logs
+
+    echo -e "${YELLOW}Resolving latest ${label} image from SourceForge...${NC}"
+    echo "  URL: $base_url"
+
+    local filename
+    filename=$(curl -sL "$base_url" \
+        | grep -oE 'href="/projects/waydroid/files/images/[^\"]*\.zip/download"' \
+        | grep -E "$pattern" \
+        | head -n 1 \
+        | sed 's/href="//;s/\"$//;s/\/download$//;s/.*waydroid_'"$WAYDROID_ARCH"'\///')
+
+    if [[ -z "$filename" ]]; then
+        echo -e "${RED}Failed to resolve latest $label image with pattern: $pattern${NC}"
+        exit 1
+    fi
+
+    echo "  -> found: $filename"
+    echo "$filename"
+}
+
 # Mode flag: when called as `waydroid.sh --setup-only`, skip reset/network and only ensure customization tooling
 SETUP_ONLY=0
 if [[ "$1" == "--setup-only" ]]; then
@@ -228,17 +310,61 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
 
         echo -e "Selected base image: ${GREEN}$TYPE${NC}"
 
-        # If a previous run left custom images behind, remove them so OTA downloads are used cleanly
+        # Clean any custom images Waydroid might try to use so we control the flow
         if [ -d "/etc/waydroid-extra/images" ]; then
-            echo -e "${YELLOW}Removing stale custom images in /etc/waydroid-extra/images before OTA init...${NC}"
+            echo -e "${YELLOW}Removing stale custom images in /etc/waydroid-extra/images before fresh download...${NC}"
             rm -rf "/etc/waydroid-extra/images"
         fi
 
-        echo -e "Downloading ${GREEN}$TYPE${NC} images with aria2c (x16, s16) via Waydroid OTA. Please wait, this may take a while..."\
+        # Mirror-aware download from SourceForge using wget, then init from local ZIPs
+        SYS_BASE_URL="https://sourceforge.net/projects/waydroid/files/images/system/lineage/waydroid_${WAYDROID_ARCH}/"
+        VEN_BASE_URL="https://sourceforge.net/projects/waydroid/files/images/vendor/waydroid_${WAYDROID_ARCH}/"
 
-        # Use aria2c as the download tool for Waydroid image downloads via OTA
-        WAYDROID_DOWNLOAD_TOOL="aria2c -x 16 -s 16" \
-        waydroid init -s "$TYPE" -f -c https://ota.waydro.id/system -v https://ota.waydro.id/vendor
+        # 3.1 Benchmark mirrors once (using system dir as probe)
+        waydroid_benchmark_mirrors "$SYS_BASE_URL"
+
+        MIRROR_SUFFIX=""
+        if [[ -n "$WAYDROID_BEST_MIRROR_CODE" ]]; then
+            MIRROR_SUFFIX="?use_mirror=${WAYDROID_BEST_MIRROR_CODE}"
+        fi
+
+        # 3.2 Resolve latest filenames for chosen TYPE and MAINLINE vendor
+        SYS_PATTERN="${WAYDROID_ANDROID_VER}.*${TYPE}"
+        VEN_PATTERN="${WAYDROID_ANDROID_VER}.*MAINLINE"
+
+        SYS_FILE=$(waydroid_get_latest_filename "$SYS_BASE_URL" "$SYS_PATTERN" "System")
+        VEN_FILE=$(waydroid_get_latest_filename "$VEN_BASE_URL" "$VEN_PATTERN" "Vendor")
+
+        SYS_DL_URL="${SYS_BASE_URL}${SYS_FILE}/download${MIRROR_SUFFIX}"
+        VEN_DL_URL="${VEN_BASE_URL}${VEN_FILE}/download${MIRROR_SUFFIX}"
+
+        echo -e "${YELLOW}Using mirror: ${WAYDROID_BEST_MIRROR_CODE:-Auto-Select}${NC}"
+        echo "  System: $SYS_DL_URL"
+        echo "  Vendor: $VEN_DL_URL"
+
+        DL_DIR="/var/lib/waydroid/downloads"
+        mkdir -p "$DL_DIR" || {
+            echo -e "${RED}Failed to create download directory at $DL_DIR.${NC}"
+            exit 1
+        }
+
+        echo -e "${YELLOW}Downloading Waydroid images to ${DL_DIR}...${NC}"
+
+        echo "Downloading System image..."
+        wget -O "${DL_DIR}/${SYS_FILE}" "$SYS_DL_URL" --show-progress || {
+            echo -e "${RED}Failed to download system image from SourceForge.${NC}"
+            exit 1
+        }
+
+        echo "Downloading Vendor image..."
+        wget -O "${DL_DIR}/${VEN_FILE}" "$VEN_DL_URL" --show-progress || {
+            echo -e "${RED}Failed to download vendor image from SourceForge.${NC}"
+            exit 1
+        }
+
+        # 3.3 Initialize Waydroid from the downloaded ZIPs
+        echo -e "${YELLOW}Initializing Waydroid from locally downloaded images...${NC}"
+        waydroid init -f -s "${DL_DIR}/${SYS_FILE}" -v "${DL_DIR}/${VEN_FILE}"
 
         if [ $? -ne 0 ]; then
             echo -e "${RED}Download failed! Please check your internet connection.${NC}"
@@ -654,15 +780,43 @@ if [ -d "${WAYDROID_SCRIPT_DIR}/.git" ] && [ -f "${WAYDROID_SCRIPT_DIR}/main.py"
 else
     echo "Cloning waydroid_script into ${WAYDROID_SCRIPT_DIR}..."
     mkdir -p "$(dirname "${WAYDROID_SCRIPT_DIR}")"
-    if command -v git >/dev/null 2>&1; then
-        git clone https://github.com/casualsnek/waydroid_script "${WAYDROID_SCRIPT_DIR}" || {
-            echo -e "${RED}Failed to clone waydroid_script. Aborting customization step.${NC}"
+
+    # Ensure git is installed for cloning
+    if ! command -v git >/dev/null 2>&1; then
+        echo -e "${YELLOW}git is not installed. Attempting to install it now...${NC}"
+        GIT_CMD=""
+        if [ -r /etc/os-release ]; then
+            . /etc/os-release
+            case "${ID}" in
+                fedora|rhel|rocky|centos)
+                    GIT_CMD="sudo dnf install -y git" ;;
+                debian|ubuntu|linuxmint|pop)
+                    GIT_CMD="sudo apt install -y git" ;;
+                arch|manjaro|endeavouros)
+                    GIT_CMD="sudo pacman -S --noconfirm git" ;;
+                opensuse*|suse|sles)
+                    GIT_CMD="sudo zypper install -y git" ;;
+                *)
+                    GIT_CMD="" ;;
+            esac
+        fi
+        if [ -n "${GIT_CMD}" ]; then
+            echo "Running: ${GIT_CMD}"
+            eval "${GIT_CMD}"
+            if ! command -v git >/dev/null 2>&1; then
+                echo -e "${RED}Failed to install git automatically. Please install it manually and rerun this script.${NC}"
+                exit 1
+            fi
+        else
+            echo -e "${RED}Could not determine package manager to install git. Please install it manually and rerun this script.${NC}"
             exit 1
-        }
-    else
-        echo -e "${RED}git is not installed. Cannot download waydroid_script. Aborting customization step.${NC}"
-        exit 1
+        fi
     fi
+
+    git clone https://github.com/casualsnek/waydroid_script "${WAYDROID_SCRIPT_DIR}" || {
+        echo -e "${RED}Failed to clone waydroid_script. Aborting customization step.${NC}"
+        exit 1
+    }
     cd "${WAYDROID_SCRIPT_DIR}" || exit 1
 fi
 
