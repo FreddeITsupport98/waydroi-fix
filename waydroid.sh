@@ -228,104 +228,17 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
 
         echo -e "Selected base image: ${GREEN}$TYPE${NC}"
 
-        if [[ "$TYPE" == "GAPPS" ]]; then
-            echo -e "${YELLOW}Using aria2c (x16, s16) to download GAPPS images from SourceForge with nearest-mirror autoselect...${NC}"
-
-            if ! command -v aria2c >/dev/null 2>&1; then
-                echo -e "${YELLOW}aria2c is not installed. Attempting to install it now...${NC}"
-
-                ARIA2C_CMD=""
-                if [ -r /etc/os-release ]; then
-                    . /etc/os-release
-                    case "${ID}" in
-                        fedora|rhel|rocky|centos)
-                            ARIA2C_CMD="sudo dnf install -y aria2"
-                            ;;
-                        debian|ubuntu|linuxmint|pop)
-                            ARIA2C_CMD="sudo apt install -y aria2"
-                            ;;
-                        arch|manjaro|endeavouros)
-                            ARIA2C_CMD="sudo pacman -S --noconfirm aria2"
-                            ;;
-                        opensuse*|suse|sles)
-                            ARIA2C_CMD="sudo zypper install -y aria2"
-                            ;;
-                        *)
-                            ARIA2C_CMD=""
-                            ;;
-                    esac
-                fi
-
-                if [ -n "${ARIA2C_CMD}" ]; then
-                    echo "Running: ${ARIA2C_CMD}"
-                    eval "${ARIA2C_CMD}"
-                    if ! command -v aria2c >/dev/null 2>&1; then
-                        echo -e "${RED}Failed to install aria2c automatically. Please install it manually (package 'aria2') and re-run the script, or choose VANILLA to use the built-in downloader.${NC}"
-                        exit 1
-                    fi
-                else
-                    echo -e "${RED}Could not determine package manager to install aria2c. Please install it manually (package 'aria2') and re-run the script, or choose VANILLA to use the built-in downloader.${NC}"
-                    exit 1
-                fi
-            fi
-
-            SYS_URL="https://downloads.sourceforge.net/project/waydroid/images/system/lineage/waydroid_x86_64/lineage-20.0-20250809-GAPPS-waydroid_x86_64-system.zip"
-            VEN_URL="https://downloads.sourceforge.net/project/waydroid/images/vendor/waydroid_x86_64/lineage-20.0-20250809-mainline-waydroid_x86_64-vendor.zip"
-
-            # Spoof a real browser User-Agent to avoid 403s from some mirrors
-            UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-            DOWNLOAD_DIR="/var/lib/waydroid/downloads"
-            mkdir -p "$DOWNLOAD_DIR" || {
-                echo -e "${RED}Failed to create download directory at $DOWNLOAD_DIR.${NC}"
-                exit 1
-            }
-
-            echo -e "${YELLOW}Downloading GAPPS system image with aria2c...${NC}"
-            aria2c -x 16 -s 16 -U "$UA" --check-certificate=false --max-file-not-found=3 -d "$DOWNLOAD_DIR" -o system.zip "$SYS_URL" || {
-                echo -e "${RED}Failed to download system ZIP with aria2c.${NC}"
-                exit 1
-            }
-
-            echo -e "${YELLOW}Downloading GAPPS vendor image with aria2c...${NC}"
-            aria2c -x 16 -s 16 -U "$UA" --check-certificate=false --max-file-not-found=3 -d "$DOWNLOAD_DIR" -o vendor.zip "$VEN_URL" || {
-                echo -e "${RED}Failed to download vendor ZIP with aria2c.${NC}"
-                exit 1
-            }
-
-            CUSTOM_IMAGES_DIR="/etc/waydroid-extra/images"
-            echo -e "${YELLOW}Preparing images in ${CUSTOM_IMAGES_DIR}...${NC}"
-            mkdir -p "$CUSTOM_IMAGES_DIR" || {
-                echo -e "${RED}Failed to create $CUSTOM_IMAGES_DIR.${NC}"
-                exit 1
-            }
-
-            if ! command -v unzip >/dev/null 2>&1; then
-                echo -e "${YELLOW}'unzip' is not installed. Please install it and re-run the script, or extract the ZIPs manually into ${CUSTOM_IMAGES_DIR}.${NC}"
-                exit 1
-            fi
-
-            unzip -o "$DOWNLOAD_DIR/system.zip" -d "$CUSTOM_IMAGES_DIR" || {
-                echo -e "${RED}Failed to extract system ZIP into $CUSTOM_IMAGES_DIR.${NC}"
-                exit 1
-            }
-
-            unzip -o "$DOWNLOAD_DIR/vendor.zip" -d "$CUSTOM_IMAGES_DIR" || {
-                echo -e "${RED}Failed to extract vendor ZIP into $CUSTOM_IMAGES_DIR.${NC}"
-                exit 1
-            }
-
-            rm -f "$DOWNLOAD_DIR/system.zip" "$DOWNLOAD_DIR/vendor.zip"
-
-            echo -e "${YELLOW}Initializing Waydroid from local GAPPS images in ${CUSTOM_IMAGES_DIR}...${NC}"
-            waydroid init -f
-        else
-            echo -e "Downloading ${GREEN}$TYPE${NC} images with aria2c (x16, s16) via Waydroid OTA. Please wait, this may take a while..."\
-
-            # Use aria2c as the download tool for Waydroid image downloads via OTA
-            WAYDROID_DOWNLOAD_TOOL="aria2c -x 16 -s 16" \
-            waydroid init -s "$TYPE" -f -c https://ota.waydro.id/system -v https://ota.waydro.id/vendor
+        # If a previous run left custom images behind, remove them so OTA downloads are used cleanly
+        if [ -d "/etc/waydroid-extra/images" ]; then
+            echo -e "${YELLOW}Removing stale custom images in /etc/waydroid-extra/images before OTA init...${NC}"
+            rm -rf "/etc/waydroid-extra/images"
         fi
+
+        echo -e "Downloading ${GREEN}$TYPE${NC} images with aria2c (x16, s16) via Waydroid OTA. Please wait, this may take a while..."\
+
+        # Use aria2c as the download tool for Waydroid image downloads via OTA
+        WAYDROID_DOWNLOAD_TOOL="aria2c -x 16 -s 16" \
+        waydroid init -s "$TYPE" -f -c https://ota.waydro.id/system -v https://ota.waydro.id/vendor
 
         if [ $? -ne 0 ]; then
             echo -e "${RED}Download failed! Please check your internet connection.${NC}"
