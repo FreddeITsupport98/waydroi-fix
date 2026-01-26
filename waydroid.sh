@@ -232,17 +232,48 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
             echo -e "${YELLOW}Using aria2c (x16, s16) to download GAPPS images from SourceForge with nearest-mirror autoselect...${NC}"
 
             if ! command -v aria2c >/dev/null 2>&1; then
-                echo -e "${RED}aria2c is not installed but is required for this download mode.${NC}"
-                echo "Please install 'aria2c' (aria2 package) and re-run the script, or choose VANILLA to use the built-in downloader."
-                exit 1
+                echo -e "${YELLOW}aria2c is not installed. Attempting to install it now...${NC}"
+
+                ARIA2C_CMD=""
+                if [ -r /etc/os-release ]; then
+                    . /etc/os-release
+                    case "${ID}" in
+                        fedora|rhel|rocky|centos)
+                            ARIA2C_CMD="sudo dnf install -y aria2"
+                            ;;
+                        debian|ubuntu|linuxmint|pop)
+                            ARIA2C_CMD="sudo apt install -y aria2"
+                            ;;
+                        arch|manjaro|endeavouros)
+                            ARIA2C_CMD="sudo pacman -S --noconfirm aria2"
+                            ;;
+                        opensuse*|suse|sles)
+                            ARIA2C_CMD="sudo zypper install -y aria2"
+                            ;;
+                        *)
+                            ARIA2C_CMD=""
+                            ;;
+                    esac
+                fi
+
+                if [ -n "${ARIA2C_CMD}" ]; then
+                    echo "Running: ${ARIA2C_CMD}"
+                    eval "${ARIA2C_CMD}"
+                    if ! command -v aria2c >/dev/null 2>&1; then
+                        echo -e "${RED}Failed to install aria2c automatically. Please install it manually (package 'aria2') and re-run the script, or choose VANILLA to use the built-in downloader.${NC}"
+                        exit 1
+                    fi
+                else
+                    echo -e "${RED}Could not determine package manager to install aria2c. Please install it manually (package 'aria2') and re-run the script, or choose VANILLA to use the built-in downloader.${NC}"
+                    exit 1
+                fi
             fi
 
-            SYS_URL="https://sourceforge.net/projects/waydroid/files/images/system/lineage/waydroid_x86_64/lineage-20.0-20250809-GAPPS-waydroid_x86_64-system.zip/download"
-            VEN_URL="https://sourceforge.net/projects/waydroid/files/images/vendor/waydroid_x86_64/lineage-20.0-20250809-mainline-waydroid_x86_64-vendor.zip/download"
+            SYS_URL="https://downloads.sourceforge.net/project/waydroid/images/system/lineage/waydroid_x86_64/lineage-20.0-20250809-GAPPS-waydroid_x86_64-system.zip"
+            VEN_URL="https://downloads.sourceforge.net/project/waydroid/images/vendor/waydroid_x86_64/lineage-20.0-20250809-mainline-waydroid_x86_64-vendor.zip"
 
-            TS=$(date +%s)
-            SYS_FAST="${SYS_URL}?ts=${TS}&use_mirror=autoselect"
-            VEN_FAST="${VEN_URL}?ts=${TS}&use_mirror=autoselect"
+            # Spoof a real browser User-Agent to avoid 403s from some mirrors
+            UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
             DOWNLOAD_DIR="/var/lib/waydroid/downloads"
             mkdir -p "$DOWNLOAD_DIR" || {
@@ -251,13 +282,13 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
             }
 
             echo -e "${YELLOW}Downloading GAPPS system image with aria2c...${NC}"
-            aria2c -x 16 -s 16 -d "$DOWNLOAD_DIR" -o system.zip "$SYS_FAST" || {
+            aria2c -x 16 -s 16 -U "$UA" --check-certificate=false --max-file-not-found=3 -d "$DOWNLOAD_DIR" -o system.zip "$SYS_URL" || {
                 echo -e "${RED}Failed to download system ZIP with aria2c.${NC}"
                 exit 1
             }
 
             echo -e "${YELLOW}Downloading GAPPS vendor image with aria2c...${NC}"
-            aria2c -x 16 -s 16 -d "$DOWNLOAD_DIR" -o vendor.zip "$VEN_FAST" || {
+            aria2c -x 16 -s 16 -U "$UA" --check-certificate=false --max-file-not-found=3 -d "$DOWNLOAD_DIR" -o vendor.zip "$VEN_URL" || {
                 echo -e "${RED}Failed to download vendor ZIP with aria2c.${NC}"
                 exit 1
             }
