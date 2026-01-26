@@ -348,99 +348,19 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
 
         # Clean any custom images Waydroid might try to use so we control the flow
         if [ -d "/etc/waydroid-extra/images" ]; then
-            echo -e "${YELLOW}Removing stale custom images in /etc/waydroid-extra/images before fresh download...${NC}"
+            echo -e "${YELLOW}Removing stale custom images in /etc/waydroid-extra/images before OTA init...${NC}"
             rm -rf "/etc/waydroid-extra/images"
         fi
 
-        # Mirror-aware download from SourceForge using wget, then init from local ZIPs
-        SYS_BASE_URL="https://sourceforge.net/projects/waydroid/files/images/system/lineage/waydroid_${WAYDROID_ARCH}/"
-        VEN_BASE_URL="https://sourceforge.net/projects/waydroid/files/images/vendor/waydroid_${WAYDROID_ARCH}/"
-
-        # 3.2 Resolve latest filenames for chosen TYPE and MAINLINE vendor
-        # Auto-detect latest *any* lineage version for this arch, e.g.:
-        #   lineage-20.0-20250809-GAPPS-waydroid_x86_64-system.zip
-        #   lineage-18.1-20230805-GAPPS-waydroid_x86_64-system.zip
-        #   lineage-20.0-20250803-MAINLINE-waydroid_x86_64-vendor.zip
-        # We rely on SourceForge listing newest first, then pick the first match.
-        SYS_PATTERN="^lineage-[0-9.]+-.*${TYPE}-waydroid_${WAYDROID_ARCH}-system\\.zip$"
-        VEN_PATTERN="^lineage-[0-9.]+-.*MAINLINE-waydroid_${WAYDROID_ARCH}-vendor\\.zip$"
-
-        SYS_FILE=$(waydroid_get_latest_filename "$SYS_BASE_URL" "$SYS_PATTERN" "System") || SYS_FILE=""
-        VEN_FILE=$(waydroid_get_latest_filename "$VEN_BASE_URL" "$VEN_PATTERN" "Vendor") || VEN_FILE=""
-
-        if [[ -z "$SYS_FILE" || -z "$VEN_FILE" ]]; then
-            echo -e "${RED}Could not determine latest system/vendor images from SourceForge. Aborting download step.${NC}"
-            exit 1
-        fi
-
-        # 3.2 Let user pick a mirror from extended list (or auto)
-        IFS=$'\n' sorted_names=($(sort <<<"${!WAYDROID_MIRRORS[*]}"))
-        unset IFS
-
-        echo -e "${YELLOW}Select a SourceForge mirror for image downloads:${NC}"
-        PS3="Select a mirror number (1-${#sorted_names[@]}): "
-        select mname in "${sorted_names[@]}"; do
-            if [[ -n "$mname" ]]; then
-                WAYDROID_SELECTED_MIRROR_CODE="${WAYDROID_MIRRORS[$mname]}"
-                echo "Selected Mirror: $mname (${WAYDROID_SELECTED_MIRROR_CODE:-auto})"
-                break
-            else
-                echo "Invalid selection. Try again."
-            fi
-        done
-
-        MIRROR_SUFFIX=""
-        if [[ -n "$WAYDROID_SELECTED_MIRROR_CODE" ]]; then
-            MIRROR_SUFFIX="?use_mirror=${WAYDROID_SELECTED_MIRROR_CODE}"
-        fi
-
-        SYS_DL_URL="${SYS_BASE_URL}${SYS_FILE}/download${MIRROR_SUFFIX}"
-        VEN_DL_URL="${VEN_BASE_URL}${VEN_FILE}/download${MIRROR_SUFFIX}"
-
-        echo -e "${YELLOW}Using mirror: ${WAYDROID_SELECTED_MIRROR_CODE:-Auto-Select}${NC}"
-        echo "  System: $SYS_DL_URL"
-        echo "  Vendor: $VEN_DL_URL"
-
-        DL_DIR="/var/lib/waydroid/downloads"
-        mkdir -p "$DL_DIR" || {
-            echo -e "${RED}Failed to create download directory at $DL_DIR.${NC}"
-            exit 1
-        }
-
-        # Browser-like User-Agent and referer to avoid 403/anti-leech
-        UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-        # Ensure axel is available
+        # Use Waydroid's OTA server with axel as the download tool
         ensure_axel
 
-        echo -e "${YELLOW}Downloading Waydroid images to ${DL_DIR} with axel (8 connections)...${NC}"
-
-        echo "Downloading System image..."
-        if ! axel -n 8 -U "$UA" -o "${DL_DIR}/${SYS_FILE}" "$SYS_DL_URL"; then
-            echo -e "${YELLOW}axel failed for system image. Falling back to single-stream wget...${NC}"
-            if ! wget -c --user-agent="$UA" --referer="https://sourceforge.net/" \
-                     -O "${DL_DIR}/${SYS_FILE}" "$SYS_DL_URL" --show-progress; then
-                echo -e "${RED}Failed to download system image from SourceForge (axel and wget both failed).${NC}"
-                exit 1
-            fi
-        fi
-
-        echo "Downloading Vendor image..."
-        if ! axel -n 8 -U "$UA" -o "${DL_DIR}/${VEN_FILE}" "$VEN_DL_URL"; then
-            echo -e "${YELLOW}axel failed for vendor image. Falling back to single-stream wget...${NC}"
-            if ! wget -c --user-agent="$UA" --referer="https://sourceforge.net/" \
-                     -O "${DL_DIR}/${VEN_FILE}" "$VEN_DL_URL" --show-progress; then
-                echo -e "${RED}Failed to download vendor image from SourceForge (axel and wget both failed).${NC}"
-                exit 1
-            fi
-        fi
-
-        # 3.3 Initialize Waydroid from the downloaded ZIPs
-        echo -e "${YELLOW}Initializing Waydroid from locally downloaded images...${NC}"
-        waydroid init -f -s "${DL_DIR}/${SYS_FILE}" -v "${DL_DIR}/${VEN_FILE}"
+        echo -e "${YELLOW}Initializing Waydroid via OTA with axel (8 connections)...${NC}"
+        WAYDROID_DOWNLOAD_TOOL="axel -n 8" \
+        waydroid init -s "$TYPE" -f -c https://ota.waydro.id/system -v https://ota.waydro.id/vendor
 
         if [ $? -ne 0 ]; then
-            echo -e "${RED}Download failed! Please check your internet connection.${NC}"
+            echo -e "${RED}Waydroid OTA init failed. Please check your internet connection or try again later.${NC}"
             exit 1
         fi
 
