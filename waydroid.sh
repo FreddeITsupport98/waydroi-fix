@@ -10,9 +10,10 @@ NC='\033[0m' # No Color
 # --- Mirror-aware downloader config for Waydroid images ---
 # Default architecture and Android version used on SourceForge paths
 WAYDROID_ARCH="x86_64"
-WAYDROID_ANDROID_VER="lineage-20.0"
+WAYDROID_ANDROID_VER="lineage-20"  # Note: SourceForge uses lineage-20, not lineage-20.0
 
 # SourceForge mirror codes to benchmark (key = label, value = mirror code or empty for auto)
+# See https://sourceforge.net/p/forge/documentation/Mirrors/
 declare -A WAYDROID_MIRRORS=(
     ["Auto-Select (Default)"]=""
     ["US - Cytranet (Chicago)"]="cytranet"
@@ -74,11 +75,13 @@ waydroid_get_latest_filename() {
     echo "  URL: $base_url"
 
     local filename
+    # SourceForge HTML contains lines like:
+    # <a href="/projects/waydroid/files/.../lineage-20-20250503-GAPPS-waydroid_x86_64-system.zip" ...>
     filename=$(curl -sL "$base_url" \
-        | grep -oE 'href="/projects/waydroid/files/images/[^\"]*\.zip/download"' \
+        | grep -oP '(?<=href=")/projects/waydroid/files/[^"]*\.zip(?=")' \
         | grep -E "$pattern" \
         | head -n 1 \
-        | sed 's/href="//;s/\"$//;s/\/download$//;s/.*waydroid_'"$WAYDROID_ARCH"'\///')
+        | sed 's|.*/||')
 
     if [[ -z "$filename" ]]; then
         echo -e "${RED}Failed to resolve latest $label image with pattern: $pattern${NC}"
