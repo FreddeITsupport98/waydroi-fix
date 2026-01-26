@@ -11,61 +11,58 @@ NC='\033[0m' # No Color
 # Default architecture used on SourceForge paths
 WAYDROID_ARCH="x86_64"
 
-# SourceForge mirror codes to benchmark (key = label, value = mirror code or empty for auto)
+# SourceForge mirror codes (key = label, value = mirror code or empty for auto)
 # See https://sourceforge.net/p/forge/documentation/Mirrors/
 declare -A WAYDROID_MIRRORS=(
-    ["Auto-Select (Default)"]=""
-    ["US - Cytranet (Chicago)"]="cytranet"
-    ["US - Eweka (New York)"]="eweka"
-    ["EU - NetCologne (Germany)"]="netcologne"
-    ["EU - Umeå University (Sweden)"]="umu"
-    ["EU - DEAC (Latvia)"]="deac-riga"
-    ["Asia - JAIST (Japan)"]="jaist"
-    ["SA - UFSCar (Brazil)"]="ufscar"
+    # --- AUTOMATIC ---
+    ["[Auto] Best Available (Default)"]=""
+
+    # --- NORTH AMERICA (USA/Canada) ---
+    ["[US] Cytranet (Chicago)"]="cytranet"
+    ["[US] Eweka (New York)"]="eweka"
+    ["[US] Pilot Fiber (New York)"]="pilotfiber"
+    ["[US] PhoenixNAP (Arizona)"]="phoenixnap"
+    ["[US] New Continuum (Chicago)"]="newcontinuum"
+    ["[US] ManagedWay (Detroit)"]="managedway"
+    ["[US] NetActuate (Durham, NC)"]="netactuate"
+    ["[US] VersaWeb (Las Vegas)"]="versaweb"
+    ["[US] DataPacket (Dallas)"]="datapacket"
+    ["[CA] iWeb (Montreal)"]="iweb"
+    ["[CA] Astute Internet (Vancouver)"]="astuteinternet"
+
+    # --- EUROPE ---
+    ["[DE] NetCologne (Germany)"]="netcologne"
+    ["[DE] Kumi Systems (Germany)"]="kumisystems"
+    ["[UK] Vorboss (London)"]="vorboss"
+    ["[UK] Kent University (UK)"]="kent"
+    ["[FR] Free.fr (France)"]="freefr"
+    ["[NL] DEAC (Amsterdam)"]="deac-ams"
+    ["[LV] DEAC (Riga)"]="deac-riga"
+    ["[SE] Umeå University (Sweden)"]="umu"
+    ["[BG] NetIX (Bulgaria)"]="netix"
+    ["[RO] Nav (Romania)"]="nav"
+
+    # --- ASIA / PACIFIC ---
+    ["[JP] JAIST (Japan)"]="jaist"
+    ["[TW] NCHC (Taiwan)"]="nchc"
+    ["[HK] UDomain (Hong Kong)"]="udomain"
+    ["[IN] Excell Media (India)"]="excellmedia"
+    ["[AU] IX Peering (Australia)"]="ixpeering"
+
+    # --- SOUTH AMERICA ---
+    ["[BR] UFSCar (Brazil)"]="ufscar"
+    ["[BR] C3SL (Brazil)"]="ufpr"
+    ["[BR] Razaoinfo (Brazil)"]="razaoinfo"
+    ["[BR] Megalink (Brazil)"]="megalink"
+    ["[AR] SiTSA (Argentina)"]="sitsa"
+
+    # --- AFRICA ---
+    ["[ZA] TENET (South Africa)"]="tenet"
+    ["[KE] Liquid Telecom (Kenya)"]="liquidtelecom"
 )
 
-WAYDROID_BEST_MIRROR_CODE=""
-
-waydroid_benchmark_mirrors() {
-    local test_url="$1"  # full /download URL without ?use_mirror
-    local best_label=""
-    local best_code=""
-    local best_time=""
-    local bytes_to_test=$((10 * 1024 * 1024))  # 10 MiB
-
-    echo -e "${YELLOW}Benchmarking SourceForge mirrors (10MiB throughput test)...${NC}"
-
-    for label in "${!WAYDROID_MIRRORS[@]}"; do
-        local code="${WAYDROID_MIRRORS[$label]}"
-        local url="$test_url"
-        [[ -n "$code" ]] && url+="?use_mirror=${code}"
-
-        echo "  > Testing ${label} (${code:-auto})"
-        local t
-        t=$(curl -L -m 40 -s --range 0-$((bytes_to_test - 1)) \
-              -w '%{time_total}' -o /dev/null "$url" || echo "inf")
-
-        if [[ "$t" == "inf" ]]; then
-            echo "    - mirror failed or timed out"
-            continue
-        fi
-        printf '    - time for 10MiB: %0.3fs\n' "$t"
-
-        if [[ -z "$best_time" || $(echo "$t < $best_time" | bc -l 2>/dev/null || echo 0) -eq 1 ]]; then
-            best_time="$t"
-            best_label="$label"
-            best_code="$code"
-        fi
-    done
-
-    if [[ -z "$best_label" ]]; then
-        echo -e "${YELLOW}All mirror tests failed, falling back to SourceForge auto-select.${NC}"
-        WAYDROID_BEST_MIRROR_CODE=""
-    else
-        echo -e "${GREEN}Fastest mirror: ${best_label} (${best_code:-auto}) [${best_time}s for 10MiB]${NC}"
-        WAYDROID_BEST_MIRROR_CODE="$best_code"
-    fi
-}
+# Selected mirror code for this run (empty = auto/select best at SF side)
+WAYDROID_SELECTED_MIRROR_CODE=""
 
 waydroid_get_latest_filename() {
     local base_url="$1"      # directory listing URL
@@ -342,19 +339,31 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
             exit 1
         fi
 
-        # 3.2 Benchmark mirrors once using the actual system ZIP (10MiB partial download)
-        SYS_TEST_URL="${SYS_BASE_URL}${SYS_FILE}/download"
-        waydroid_benchmark_mirrors "$SYS_TEST_URL"
+        # 3.2 Let user pick a mirror from extended list (or auto)
+        IFS=$'\n' sorted_names=($(sort <<<"${!WAYDROID_MIRRORS[*]}"))
+        unset IFS
+
+        echo -e "${YELLOW}Select a SourceForge mirror for image downloads:${NC}"
+        PS3="Select a mirror number (1-${#sorted_names[@]}): "
+        select mname in "${sorted_names[@]}"; do
+            if [[ -n "$mname" ]]; then
+                WAYDROID_SELECTED_MIRROR_CODE="${WAYDROID_MIRRORS[$mname]}"
+                echo "Selected Mirror: $mname (${WAYDROID_SELECTED_MIRROR_CODE:-auto})"
+                break
+            else
+                echo "Invalid selection. Try again."
+            fi
+        done
 
         MIRROR_SUFFIX=""
-        if [[ -n "$WAYDROID_BEST_MIRROR_CODE" ]]; then
-            MIRROR_SUFFIX="?use_mirror=${WAYDROID_BEST_MIRROR_CODE}"
+        if [[ -n "$WAYDROID_SELECTED_MIRROR_CODE" ]]; then
+            MIRROR_SUFFIX="?use_mirror=${WAYDROID_SELECTED_MIRROR_CODE}"
         fi
 
         SYS_DL_URL="${SYS_BASE_URL}${SYS_FILE}/download${MIRROR_SUFFIX}"
         VEN_DL_URL="${VEN_BASE_URL}${VEN_FILE}/download${MIRROR_SUFFIX}"
 
-        echo -e "${YELLOW}Using mirror: ${WAYDROID_BEST_MIRROR_CODE:-Auto-Select}${NC}"
+        echo -e "${YELLOW}Using mirror: ${WAYDROID_SELECTED_MIRROR_CODE:-Auto-Select}${NC}"
         echo "  System: $SYS_DL_URL"
         echo "  Vendor: $VEN_DL_URL"
 
