@@ -7,6 +7,27 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# --- Optional: ensure Android binder/ashmem kernel modules are loaded (best-effort) ---
+ensure_android_kernel_modules() {
+    # Only attempt on Linux with modprobe available
+    if ! command -v modprobe >/dev/null 2>&1; then
+        return 0
+    fi
+
+    # binder_linux
+    if ! grep -qw "binder_linux" /proc/modules 2>/dev/null; then
+        echo -e "${YELLOW}Attempting to load Android binder kernel module (binder_linux)...${NC}"
+        if ! sudo modprobe binder_linux 2>/dev/null; then
+            echo -e "${YELLOW}Warning: could not load binder_linux. Waydroid may still work if binder is built into the kernel.${NC}"
+        fi
+    fi
+
+    # ashmem_linux (not present on all kernels)
+    if ! grep -qw "ashmem_linux" /proc/modules 2>/dev/null; then
+        sudo modprobe ashmem_linux 2>/dev/null || true
+    fi
+}
+
 # --- Mirror-aware downloader config for Waydroid images ---
 # Default architecture used on SourceForge paths
 WAYDROID_ARCH="x86_64"
@@ -250,7 +271,9 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
                     PKG_REINSTALL_CMD="sudo pacman -S --noconfirm waydroid"
                     ;;
                 opensuse*|suse|sles)
-                    PKG_REINSTALL_CMD="sudo zypper install -y --force waydroid"
+                    # On openSUSE, Waydroid is split into multiple packages (core + images + magisk helpers)
+                    # Reinstall all of them if available in the configured repositories.
+                    PKG_REINSTALL_CMD="sudo zypper install -y --force waydroid waydroid-image waydroid-image-system waydroid-image-vendor waydroid-magisk waydroid-magisk-apk"
                     ;;
                 *)
                     PKG_REINSTALL_CMD=""
@@ -260,10 +283,13 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
 
         if [ -n "${PKG_REINSTALL_CMD}" ]; then
             echo "Running: ${PKG_REINSTALL_CMD}"
-            eval "${PKG_REINSTALL_CMD}" || echo -e "${YELLOW}Warning: failed to reinstall Waydroid package. Continuing with existing installation.${NC}"
+            eval "${PKG_REINSTALL_CMD}" || echo -e "${YELLOW}Warning: failed to reinstall Waydroid packages. Continuing with existing installation (if any).${NC}"
         else
             echo -e "${YELLOW}Could not determine package manager to reinstall Waydroid. Please manage the Waydroid package manually if needed.${NC}"
         fi
+
+        # Ensure Android binder/ashmem kernel modules are loaded (best-effort)
+        ensure_android_kernel_modules
 
         # --- 2. NETWORK FIX PHASE ---
         echo -e "\n${YELLOW}[2/5] Applying Network Fixes (No-Firewall Mode)...${NC}"
