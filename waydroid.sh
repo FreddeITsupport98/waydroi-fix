@@ -236,9 +236,9 @@ if ! command -v waydroid >/dev/null 2>&1; then
 fi
 
 if [[ $SETUP_ONLY -eq 0 ]]; then
-    # Ask whether to perform a full reset first
-    echo -e "${YELLOW}Do you want to RESET Waydroid? This can delete ALL Waydroid data (apps, settings, images).${NC}"
-    read -p "Reset Waydroid? (y/n): " -n 1 -r
+    # Ask whether to perform a reset (services + packages, optional data wipe)
+    echo -e "${YELLOW}Do you want to RESET Waydroid? This will restart services and reinstall Waydroid packages. Data deletion is OPTIONAL and asked separately.${NC}"
+    read -p "Reset Waydroid packages and services? (y/n): " -n 1 -r
     echo
 
     DO_RESET=0
@@ -247,44 +247,51 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
     fi
 
     if [[ $DO_RESET -eq 1 ]]; then
-    echo -e "${YELLOW}WARNING: This will delete ALL Waydroid data (apps, settings, images).${NC}"
-    read -p "Are you sure you want to proceed? (y/n): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Aborting reset. Proceeding to customization only."
-    else
-        # --- 1. CLEANUP PHASE ---
-        echo -e "\n${YELLOW}[1/5] Cleaning up old installation...${NC}"
+        # --- 1. CLEANUP PHASE (non-destructive by default) ---
+        echo -e "\n${YELLOW}[1/5] Resetting Waydroid services and packages...${NC}"
 
         # Stop services
         echo "Stopping Waydroid services..."
         systemctl stop waydroid-container 2>/dev/null
         waydroid session stop 2>/dev/null
 
-        # Unmount potential stuck mounts
-        echo "Unmounting stuck directories..."
-        umount /var/lib/waydroid/rootfs/vendor 2>/dev/null
-        umount /var/lib/waydroid/rootfs 2>/dev/null
-
-        # Remove Data
-        echo "Removing Waydroid folders..."
-        rm -rf /var/lib/waydroid
-
-        # Determine the regular user home (avoid wiping all of /home/* on multi-user systems)
-        USER_HOME="$HOME"
-        if [[ -n "$SUDO_USER" && "$SUDO_USER" != "root" ]]; then
-            # Resolve the invoking user's home directory safely
-            USER_HOME="$(eval echo "~$SUDO_USER")"
+        # Ask separately if user wants to wipe all Waydroid data
+        DO_DATA_WIPE=0
+        echo -e "${YELLOW}OPTIONAL: You can also DELETE all Waydroid data (apps, settings, images). This is destructive.${NC}"
+        read -p "Delete all Waydroid data directories? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            DO_DATA_WIPE=1
         fi
 
-        if [[ -n "$USER_HOME" && -d "$USER_HOME" ]]; then
-            rm -rf "$USER_HOME/.waydroid"
-            rm -rf "$USER_HOME/.share/waydroid"
-            rm -rf "$USER_HOME/.local/share/waydroid"
-        fi
+        if [[ $DO_DATA_WIPE -eq 1 ]]; then
+            # Unmount potential stuck mounts
+            echo "Unmounting stuck directories..."
+            umount /var/lib/waydroid/rootfs/vendor 2>/dev/null
+            umount /var/lib/waydroid/rootfs 2>/dev/null
 
-        # Also clean root's Waydroid data if present
-        rm -rf /root/.waydroid
+            # Remove Data
+            echo "Removing Waydroid folders..."
+            rm -rf /var/lib/waydroid
+
+            # Determine the regular user home (avoid wiping all of /home/* on multi-user systems)
+            USER_HOME="$HOME"
+            if [[ -n "$SUDO_USER" && "$SUDO_USER" != "root" ]]; then
+                # Resolve the invoking user's home directory safely
+                USER_HOME="$(eval echo "~$SUDO_USER")"
+            fi
+
+            if [[ -n "$USER_HOME" && -d "$USER_HOME" ]]; then
+                rm -rf "$USER_HOME/.waydroid"
+                rm -rf "$USER_HOME/.share/waydroid"
+                rm -rf "$USER_HOME/.local/share/waydroid"
+            fi
+
+            # Also clean root's Waydroid data if present
+            rm -rf /root/.waydroid
+        else
+            echo "Skipping deletion of Waydroid data directories."
+        fi
 
         # Reinstall Package (Optional but good for sanity)
         echo "Reinstalling Waydroid package..."
@@ -412,32 +419,56 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
 
         INIT_DONE=0
 
-        # On openSUSE with opi, prefer distro image packages instead of OTA downloads
+        # On openSUSE with opi, prefer specific system+vendor image packages instead of OTA downloads
         if [ -r /etc/os-release ]; then
             . /etc/os-release
         fi
         if [[ "${ID}" == opensuse* || "${ID}" == "suse" || "${ID}" == "sles" ]] && command -v opi >/dev/null 2>&1; then
             echo -e "${YELLOW}Using openSUSE Waydroid image packages via opi instead of OTA downloads...${NC}"
+
+            # Decide which RPMs to use for system and vendor
+            SYSTEM_IMAGE_PKG=""
+            VENDOR_IMAGE_PKG=""
             if [[ "$TYPE" == "GAPPS" ]]; then
-                IMAGE_META_PKG="waydroid-image-gapps"
+                # Matches your opi menu: 6 = waydroid-image-gapps-system, 7 = waydroid-image-gapps-vendor
+                SYSTEM_IMAGE_PKG="waydroid-image-gapps-system"
+                VENDOR_IMAGE_PKG="waydroid-image-gapps-vendor"
             else
-                IMAGE_META_PKG="waydroid-image"
+                # Vanilla: use generic system+vendor image packages
+                SYSTEM_IMAGE_PKG="waydroid-image-system"
+                VENDOR_IMAGE_PKG="waydroid-image-vendor"
             fi
-            IMAGE_INSTALL_CMD="opi ${IMAGE_META_PKG}"
-            echo "Running: ${IMAGE_INSTALL_CMD}"
-            if eval "${IMAGE_INSTALL_CMD}"; then
-                if rpm -q "${IMAGE_META_PKG}" >/dev/null 2>&1; then
-                    echo -e "${YELLOW}Initializing Waydroid using distro-provided image packages...${NC}"
-                    if waydroid init -s "$TYPE" -f; then
-                        INIT_DONE=1
-                    else
-                        echo -e "${YELLOW}Waydroid init using distro images failed. Will fall back to OTA download.${NC}"
-                    fi
+
+            # Install system image package (interactive opi menu; you pick the repo, e.g. option 6)
+            if [[ -n "${SYSTEM_IMAGE_PKG}" ]]; then
+                IMAGE_INSTALL_CMD="opi ${SYSTEM_IMAGE_PKG}"
+                echo "Running: ${IMAGE_INSTALL_CMD}"
+                if ! eval "${IMAGE_INSTALL_CMD}"; then
+                    echo -e "${YELLOW}Failed to install ${SYSTEM_IMAGE_PKG} via opi. Falling back to OTA download.${NC}"
+                fi
+            fi
+
+            # Install vendor image package (interactive opi menu; you pick the repo, e.g. option 7)
+            if [[ -n "${VENDOR_IMAGE_PKG}" ]]; then
+                VENDOR_INSTALL_CMD="opi ${VENDOR_IMAGE_PKG}"
+                echo "Running: ${VENDOR_INSTALL_CMD}"
+                if ! eval "${VENDOR_INSTALL_CMD}"; then
+                    echo -e "${YELLOW}Failed to install ${VENDOR_IMAGE_PKG} via opi. Falling back to OTA download.${NC}"
+                fi
+            fi
+
+            # Check that both packages are actually installed
+            if [[ -n "${SYSTEM_IMAGE_PKG}" && -n "${VENDOR_IMAGE_PKG}" ]] \
+               && rpm -q "${SYSTEM_IMAGE_PKG}" >/dev/null 2>&1 \
+               && rpm -q "${VENDOR_IMAGE_PKG}" >/dev/null 2>&1; then
+                echo -e "${YELLOW}Initializing Waydroid using distro-provided system+vendor images...${NC}"
+                if waydroid init -s "$TYPE" -f; then
+                    INIT_DONE=1
                 else
-                    echo -e "${YELLOW}Waydroid image package ${IMAGE_META_PKG} not found after opi install. Falling back to OTA download.${NC}"
+                    echo -e "${YELLOW}Waydroid init using distro images failed. Will fall back to OTA download.${NC}"
                 fi
             else
-                echo -e "${YELLOW}Failed to install Waydroid image packages via opi. Falling back to OTA download.${NC}"
+                echo -e "${YELLOW}Required image packages (${SYSTEM_IMAGE_PKG}, ${VENDOR_IMAGE_PKG}) not both installed. Falling back to OTA download.${NC}"
             fi
         fi
 
@@ -473,8 +504,7 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
         echo "Waydroid has been reset and reinstalled."
         echo "You can now launch it from your menu or by running:"
         echo -e "${YELLOW}waydroid session start${NC}"
-    fi
-else
+    else
         echo -e "${YELLOW}Skipping Waydroid reset. Proceeding directly to customization...${NC}"
     fi
 else
