@@ -28,6 +28,33 @@ ensure_android_kernel_modules() {
     fi
 }
 
+# --- Optional: ensure Waydroid Magisk helper packages on openSUSE ---
+ensure_opensuse_magisk_pkgs() {
+    # Only relevant on openSUSE/SLES
+    if [ ! -r /etc/os-release ]; then
+        return 0
+    fi
+    . /etc/os-release
+
+    case "${ID}" in
+        opensuse*|suse|sles)
+            echo -e "${YELLOW}Ensuring Waydroid Magisk helper packages are installed (waydroid-magisk, waydroid-magisk-apk)...${NC}"
+            if command -v opi >/dev/null 2>&1; then
+                if ! opi waydroid-magisk; then
+                    echo -e "${YELLOW}Warning: failed to install waydroid-magisk via opi. You may need to install it manually.${NC}"
+                fi
+                if ! opi waydroid-magisk-apk; then
+                    echo -e "${YELLOW}Warning: failed to install waydroid-magisk-apk via opi. You may need to install it manually.${NC}"
+                fi
+            else
+                if ! sudo zypper install -y waydroid-magisk waydroid-magisk-apk; then
+                    echo -e "${YELLOW}Warning: failed to install waydroid-magisk/waydroid-magisk-apk via zypper. You may need to install them manually.${NC}"
+                fi
+            fi
+            ;;
+    esac
+}
+
 # --- Mirror-aware downloader config for Waydroid images ---
 # Default architecture used on SourceForge paths
 WAYDROID_ARCH="x86_64"
@@ -172,7 +199,12 @@ if ! command -v waydroid >/dev/null 2>&1; then
                     PKG_INSTALL_CMD="sudo pacman -S --noconfirm waydroid"
                     ;;
                 opensuse*|suse|sles)
-                    PKG_INSTALL_CMD="sudo zypper install -y waydroid"
+                    # Prefer opi on openSUSE if available, fall back to zypper
+                    if command -v opi >/dev/null 2>&1; then
+                        PKG_INSTALL_CMD="opi waydroid"
+                    else
+                        PKG_INSTALL_CMD="sudo zypper install -y waydroid"
+                    fi
                     ;;
                 *)
                     PKG_INSTALL_CMD=""
@@ -271,9 +303,13 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
                     PKG_REINSTALL_CMD="sudo pacman -S --noconfirm waydroid"
                     ;;
                 opensuse*|suse|sles)
-                    # On openSUSE, Waydroid is split into multiple packages (core + images + magisk helpers)
-                    # Reinstall all of them if available in the configured repositories.
-                    PKG_REINSTALL_CMD="sudo zypper install -y --force waydroid waydroid-image waydroid-image-system waydroid-image-vendor waydroid-magisk waydroid-magisk-apk"
+                    # On openSUSE prefer opi for Waydroid, fall back to explicit zypper packages
+                    if command -v opi >/dev/null 2>&1; then
+                        PKG_REINSTALL_CMD="opi waydroid"
+                    else
+                        # Waydroid is split into multiple packages (core + images + magisk helpers)
+                        PKG_REINSTALL_CMD="sudo zypper install -y --force waydroid waydroid-image waydroid-image-system waydroid-image-vendor waydroid-magisk waydroid-magisk-apk"
+                    fi
                     ;;
                 *)
                     PKG_REINSTALL_CMD=""
@@ -290,6 +326,8 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
 
         # Ensure Android binder/ashmem kernel modules are loaded (best-effort)
         ensure_android_kernel_modules
+        # Ensure Magisk helper packages on openSUSE (waydroid-magisk, waydroid-magisk-apk)
+        ensure_opensuse_magisk_pkgs
 
         # --- 2. NETWORK FIX PHASE ---
         echo -e "\n${YELLOW}[2/5] Applying Network Fixes (No-Firewall Mode)...${NC}"
@@ -372,18 +410,51 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
 
         echo -e "Selected base image: ${GREEN}$TYPE${NC}"
 
-        # Clean any custom images Waydroid might try to use so we control the flow
-        if [ -d "/etc/waydroid-extra/images" ]; then
-            echo -e "${YELLOW}Removing stale custom images in /etc/waydroid-extra/images before OTA init...${NC}"
-            rm -rf "/etc/waydroid-extra/images"
+        INIT_DONE=0
+
+        # On openSUSE with opi, prefer distro image packages instead of OTA downloads
+        if [ -r /etc/os-release ]; then
+            . /etc/os-release
+        fi
+        if [[ "${ID}" == opensuse* || "${ID}" == "suse" || "${ID}" == "sles" ]] && command -v opi >/dev/null 2>&1; then
+            echo -e "${YELLOW}Using openSUSE Waydroid image packages via opi instead of OTA downloads...${NC}"
+            if [[ "$TYPE" == "GAPPS" ]]; then
+                IMAGE_META_PKG="waydroid-image-gapps"
+            else
+                IMAGE_META_PKG="waydroid-image"
+            fi
+            IMAGE_INSTALL_CMD="opi ${IMAGE_META_PKG}"
+            echo "Running: ${IMAGE_INSTALL_CMD}"
+            if eval "${IMAGE_INSTALL_CMD}"; then
+                if rpm -q "${IMAGE_META_PKG}" >/dev/null 2>&1; then
+                    echo -e "${YELLOW}Initializing Waydroid using distro-provided image packages...${NC}"
+                    if waydroid init -s "$TYPE" -f; then
+                        INIT_DONE=1
+                    else
+                        echo -e "${YELLOW}Waydroid init using distro images failed. Will fall back to OTA download.${NC}"
+                    fi
+                else
+                    echo -e "${YELLOW}Waydroid image package ${IMAGE_META_PKG} not found after opi install. Falling back to OTA download.${NC}"
+                fi
+            else
+                echo -e "${YELLOW}Failed to install Waydroid image packages via opi. Falling back to OTA download.${NC}"
+            fi
         fi
 
-        # Use Waydroid's OTA server with axel as the download tool
-        ensure_axel
+        if [[ ${INIT_DONE} -ne 1 ]]; then
+            # Clean any custom images Waydroid might try to use so we control the flow
+            if [ -d "/etc/waydroid-extra/images" ]; then
+                echo -e "${YELLOW}Removing stale custom images in /etc/waydroid-extra/images before OTA init...${NC}"
+                rm -rf "/etc/waydroid-extra/images"
+            fi
 
-        echo -e "${YELLOW}Initializing Waydroid via OTA with axel (8 connections)...${NC}"
-        WAYDROID_DOWNLOAD_TOOL="axel -n 8" \
-        waydroid init -s "$TYPE" -f -c https://ota.waydro.id/system -v https://ota.waydro.id/vendor
+            # Use Waydroid's OTA server with axel as the download tool
+            ensure_axel
+
+            echo -e "${YELLOW}Initializing Waydroid via OTA with axel (8 connections)...${NC}"
+            WAYDROID_DOWNLOAD_TOOL="axel -n 8" \
+            waydroid init -s "$TYPE" -f -c https://ota.waydro.id/system -v https://ota.waydro.id/vendor
+        fi
 
         if [ $? -ne 0 ]; then
             echo -e "${RED}Waydroid OTA init failed. Please check your internet connection or try again later.${NC}"
