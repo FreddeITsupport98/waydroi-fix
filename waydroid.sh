@@ -427,17 +427,11 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
             echo -e "${YELLOW}Using openSUSE Waydroid image packages via opi instead of OTA downloads...${NC}"
 
             # Decide which RPMs to use for system and vendor
-            SYSTEM_IMAGE_PKG=""
-            VENDOR_IMAGE_PKG=""
-            if [[ "$TYPE" == "GAPPS" ]]; then
-                # Matches your opi menu: 6 = waydroid-image-gapps-system, 7 = waydroid-image-gapps-vendor
-                SYSTEM_IMAGE_PKG="waydroid-image-gapps-system"
-                VENDOR_IMAGE_PKG="waydroid-image-gapps-vendor"
-            else
-                # Vanilla: use generic system+vendor image packages
-                SYSTEM_IMAGE_PKG="waydroid-image-system"
-                VENDOR_IMAGE_PKG="waydroid-image-vendor"
-            fi
+            # For openSUSE, always prefer GAPPS-capable images from opi
+            #   system: waydroid-image-gapps-system
+            #   vendor: waydroid-image-gapps-vendor
+            SYSTEM_IMAGE_PKG="waydroid-image-gapps-system"
+            VENDOR_IMAGE_PKG="waydroid-image-gapps-vendor"
 
             # Install system image package (interactive opi menu; you pick the repo, e.g. option 6)
             if [[ -n "${SYSTEM_IMAGE_PKG}" ]]; then
