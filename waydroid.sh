@@ -419,12 +419,15 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
 
         INIT_DONE=0
 
-        # On openSUSE with opi, prefer specific system+vendor image packages instead of OTA downloads
+        # On openSUSE, opi-based image packages (system/vendor) are DISABLED by default.
+        # To re-enable them, set USE_OPI_IMAGES=1 in your environment before running this script.
         if [ -r /etc/os-release ]; then
             . /etc/os-release
         fi
-        if [[ "${ID}" == opensuse* || "${ID}" == "suse" || "${ID}" == "sles" ]] && command -v opi >/dev/null 2>&1; then
-            echo -e "${YELLOW}Using openSUSE Waydroid image packages via opi instead of OTA downloads...${NC}"
+        if [[ "${ID}" == opensuse* || "${ID}" == "suse" || "${ID}" == "sles" ]] \
+           && command -v opi >/dev/null 2>&1 \
+           && [[ "${USE_OPI_IMAGES:-0}" == "1" ]]; then
+            echo -e "${YELLOW}Using openSUSE Waydroid image packages via opi instead of default SourceForge images...${NC}"
 
             # Decide which RPMs to use for system and vendor
             # For openSUSE, always prefer GAPPS-capable images from opi
@@ -469,16 +472,16 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
         if [[ ${INIT_DONE} -ne 1 ]]; then
             # Clean any custom images Waydroid might try to use so we control the flow
             if [ -d "/etc/waydroid-extra/images" ]; then
-                echo -e "${YELLOW}Removing stale custom images in /etc/waydroid-extra/images before OTA init...${NC}"
+                echo -e "${YELLOW}Removing stale custom images in /etc/waydroid-extra/images before init...${NC}"
                 rm -rf "/etc/waydroid-extra/images"
             fi
 
-            # Use Waydroid's OTA server with axel as the download tool
+            # Use Waydroid's *default* image sources (SourceForge) but accelerate downloads with axel
             ensure_axel
 
-            echo -e "${YELLOW}Initializing Waydroid via OTA with axel (8 connections)...${NC}"
+            echo -e "${YELLOW}Initializing Waydroid using default SourceForge images with axel (8 connections)...${NC}"
             WAYDROID_DOWNLOAD_TOOL="axel -n 8" \
-            waydroid init -s "$TYPE" -f -c https://ota.waydro.id/system -v https://ota.waydro.id/vendor
+            waydroid init -s "$TYPE" -f
         fi
 
         if [ $? -ne 0 ]; then
