@@ -59,6 +59,40 @@ ensure_opensuse_magisk_pkgs() {
 # Default architecture used on SourceForge paths
 WAYDROID_ARCH="x86_64"
 
+# Ensure aria2c (multi-connection downloader) is installed
+ensure_aria2() {
+    if command -v aria2c >/dev/null 2>&1; then
+        return 0
+    fi
+    echo -e "${YELLOW}aria2c is not installed. Attempting to install it now...${NC}"
+    local ARIA_CMD=""
+    if [ -r /etc/os-release ]; then
+        . /etc/os-release
+        case "${ID}" in
+            fedora|rhel|rocky|centos)
+                ARIA_CMD="sudo dnf install -y aria2" ;;
+            debian|ubuntu|linuxmint|pop)
+                ARIA_CMD="sudo apt install -y aria2" ;;
+            arch|manjaro|endeavouros)
+                ARIA_CMD="sudo pacman -S --noconfirm aria2" ;;
+            opensuse*|suse|sles)
+                ARIA_CMD="sudo zypper install -y aria2" ;;
+            *)
+                ARIA_CMD="" ;;
+        esac
+    fi
+    if [ -n "${ARIA_CMD}" ]; then
+        echo "Running: ${ARIA_CMD}"
+        if ! eval "${ARIA_CMD}"; then
+            echo -e "${RED}Failed to install aria2 automatically. Please install the 'aria2' package manually and rerun this script.${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${RED}Could not determine package manager to install aria2. Please install the 'aria2' package manually and rerun this script.${NC}"
+        exit 1
+    fi
+}
+
 # SourceForge mirror codes (key = label, value = mirror code or empty for auto)
 # See https://sourceforge.net/p/forge/documentation/Mirrors/
 declare -A WAYDROID_MIRRORS=(
@@ -417,6 +451,61 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
 
         echo -e "Selected base image: ${GREEN}$TYPE${NC}"
 
+        # --- Local ROM cache support (~/.roms) ---
+        # Use the invoking user's home for ROM storage (not root's)
+        ROM_USER_HOME="$HOME"
+        if [[ -n "$SUDO_USER" && "$SUDO_USER" != "root" ]]; then
+            ROM_USER_HOME="$(eval echo "~$SUDO_USER")"
+        fi
+        ROM_DIR="${ROM_USER_HOME}/.roms"
+        mkdir -p "$ROM_DIR"
+        # Ensure ~/.roms is owned by the invoking user (not root)
+        if [[ -n "$SUDO_USER" && "$SUDO_USER" != "root" ]]; then
+            chown -R "$SUDO_USER":"$SUDO_USER" "$ROM_DIR" 2>/dev/null || true
+        fi
+        echo -e "${YELLOW}Local ROM cache directory:${NC} $ROM_DIR"
+
+        USE_LOCAL_ROMS=0
+        SYSTEM_LOCAL_ZIP=""
+        VENDOR_LOCAL_ZIP=""
+
+        while true; do
+            # Detect candidate system/vendor zip files in ~/.roms
+            SYSTEM_LOCAL_ZIP="$(ls "$ROM_DIR"/*system*.zip 2>/dev/null | head -n 1 || true)"
+            VENDOR_LOCAL_ZIP="$(ls "$ROM_DIR"/*vendor*.zip 2>/dev/null | head -n 1 || true)"
+
+            if [[ -n "$SYSTEM_LOCAL_ZIP" && -n "$VENDOR_LOCAL_ZIP" ]]; then
+                echo "Found local ROM files in $ROM_DIR:"
+                echo "  System: $SYSTEM_LOCAL_ZIP"
+                echo "  Vendor: $VENDOR_LOCAL_ZIP"
+                echo -n "Use these local ROM zips instead of downloading from the internet? ([y]es/[n]o/[r]efresh): "
+                read -r -n1 choice
+                echo
+                case "$choice" in
+                    y|Y)
+                        USE_LOCAL_ROMS=1
+                        break
+                        ;;
+                    n|N)
+                        USE_LOCAL_ROMS=0
+                        break
+                        ;;
+                    r|R)
+                        echo "Refreshing ROM list..."
+                        continue
+                        ;;
+                    *)
+                        echo "Invalid choice, please press y, n or r."
+                        continue
+                        ;;
+                esac
+            else
+                echo "No matching system/vendor ROM zip files found in $ROM_DIR."
+                echo "You can place downloaded system/vendor zips there and re-run this script, or choose to download automatically."
+                break
+            fi
+        done
+
         INIT_DONE=0
 
         # On openSUSE, opi-based image packages (system/vendor) are DISABLED by default.
@@ -476,12 +565,12 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
                 rm -rf "/etc/waydroid-extra/images"
             fi
 
-            # Use Waydroid's *default* image sources (SourceForge) but accelerate downloads with axel
-            ensure_axel
+            # Use the official Waydroid OTA server (ota.waydro.id) and download via aria2c
+            ensure_aria2
 
-            echo -e "${YELLOW}Initializing Waydroid using default SourceForge images with axel (8 connections)...${NC}"
-            WAYDROID_DOWNLOAD_TOOL="axel -n 8" \
-            waydroid init -s "$TYPE" -f
+            echo -e "${YELLOW}Initializing Waydroid via ota.waydro.id with aria2c (16 connections)...${NC}"
+            WAYDROID_DOWNLOAD_TOOL="aria2c -x 16 -s 16" \
+            waydroid init -s "$TYPE" -f -c https://ota.waydro.id/system -v https://ota.waydro.id/vendor
         fi
 
         if [ $? -ne 0 ]; then
