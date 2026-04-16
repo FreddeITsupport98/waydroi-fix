@@ -246,11 +246,70 @@ import json, sys
 try:
     d = json.load(sys.stdin)
     r = d['response'][0]
-    print(r['url'] + '|' + r['filename'] + '|' + str(r.get('size', 0)))
+    # Output: url|filename|size|sha256  (sha256 is in the 'id' field)
+    print(r['url'] + '|' + r['filename'] + '|' + str(r.get('size', 0)) + '|' + r.get('id', ''))
 except Exception as e:
     print('OTA parse error: ' + str(e), file=sys.stderr)
     sys.exit(1)
 " || return 1
+}
+
+# Verify a Waydroid image zip: checks file size, SHA-256 (from OTA 'id' field),
+# and that the file is a valid zip. Prints status to stderr.
+# Usage: waydroid_verify_zip <filepath> <expected_size> <expected_sha256> <label>
+# Returns: 0 = valid, 1 = corrupt / mismatch
+waydroid_verify_zip() {
+    local filepath="$1" expected_size="$2" expected_sha256="$3" label="$4"
+
+    if [[ ! -f "${filepath}" ]]; then
+        return 1
+    fi
+
+    # Size check (fast, skipped when expected_size = 0)
+    if [[ "${expected_size}" -gt 0 ]]; then
+        local actual_size
+        actual_size=$(stat -c%s "${filepath}" 2>/dev/null || echo 0)
+        if [[ "${actual_size}" -ne "${expected_size}" ]]; then
+            echo -e "${RED}  [!] ${label}: size mismatch (${actual_size} vs expected ${expected_size}) — corrupt or incomplete${NC}" >&2
+            return 1
+        fi
+    fi
+
+    if [[ -n "${expected_sha256}" ]]; then
+        # SHA-256 check — definitive integrity proof
+        printf '  Verifying %s integrity (SHA-256)... ' "${label}" >&2
+        local actual_sha256
+        actual_sha256=$(python3 -c "
+import hashlib, sys
+h = hashlib.sha256()
+with open(sys.argv[1], 'rb') as f:
+    for chunk in iter(lambda: f.read(65536), b''):
+        h.update(chunk)
+print(h.hexdigest())
+" "${filepath}" 2>/dev/null)
+        if [[ "${actual_sha256}" != "${expected_sha256}" ]]; then
+            echo -e "${RED}FAIL${NC}" >&2
+            echo -e "${RED}      expected: ${expected_sha256}${NC}" >&2
+            echo -e "${RED}      got:      ${actual_sha256}${NC}" >&2
+            return 1
+        fi
+        echo -e "${GREEN}OK${NC}" >&2
+    else
+        # No SHA-256 available — at least confirm it is a valid zip
+        if ! python3 -c "
+import zipfile, sys
+try:
+    with zipfile.ZipFile(sys.argv[1]) as zf:
+        zf.namelist()
+except Exception:
+    sys.exit(1)
+" "${filepath}" 2>/dev/null; then
+            echo -e "${RED}  [!] ${label}: not a valid zip file${NC}" >&2
+            return 1
+        fi
+    fi
+
+    return 0
 }
 
 # Download with a live progress bar by parsing aria2c's log file output.
@@ -357,18 +416,26 @@ waydroid_ota_aria_download() {
     local info
     info=$(waydroid_ota_get_download_info "${ota_url}" "${type}" "${arch}" "${label}") || return 1
 
-    # Parse pipe-delimited output: url|filename|size
-    local dl_url filename total_bytes rest
+    # Parse pipe-delimited output: url|filename|size|sha256
+    local dl_url filename total_bytes sha256 rest
     dl_url="${info%%|*}"
     rest="${info#*|}"
     filename="${rest%%|*}"
-    total_bytes="${rest#*|}"
+    rest="${rest#*|}"
+    total_bytes="${rest%%|*}"
+    sha256="${rest#*|}"
     local dest_file="${dest_dir}/${filename}"
 
     if [[ -f "${dest_file}" ]]; then
-        echo -e "${GREEN}  -> Using cached ${label} image: ${dest_file}${NC}" >&2
-        echo "${dest_file}"
-        return 0
+        echo -e "${YELLOW}  -> Found cached ${label} image, verifying integrity...${NC}" >&2
+        if waydroid_verify_zip "${dest_file}" "${total_bytes}" "${sha256}" "${label}"; then
+            echo -e "${GREEN}  -> Using verified cached ${label} image: ${dest_file}${NC}" >&2
+            echo "${dest_file}"
+            return 0
+        else
+            echo -e "${YELLOW}  -> Cached file is corrupt — deleting and re-downloading...${NC}" >&2
+            rm -f "${dest_file}"
+        fi
     fi
 
     # Resolve SourceForge /download redirect to the actual CDN mirror URL.
@@ -387,6 +454,14 @@ waydroid_ota_aria_download() {
 
     waydroid_download_with_progress \
         "${dl_url}" "${dest_dir}" "${filename}" "${label}" "${total_bytes}" || return 1
+
+    # Verify the freshly downloaded file before returning its path
+    echo -e "${YELLOW}  -> Verifying downloaded ${label} image...${NC}" >&2
+    if ! waydroid_verify_zip "${dest_file}" "${total_bytes}" "${sha256}" "${label}"; then
+        echo -e "${RED}  -> Download verification FAILED. Removing corrupt file.${NC}" >&2
+        rm -f "${dest_file}"
+        return 1
+    fi
 
     echo "${dest_file}"
 }

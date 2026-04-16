@@ -196,14 +196,17 @@ waydroid_ota_get_download_info 'https://ota.waydro.id/system' 'VANILLA' 'x86_64'
         GOT_URL="${INFO%%|*}"
         REST="${INFO#*|}"
         GOT_FILE="${REST%%|*}"
-        GOT_SIZE="${REST#*|}"
-        if [[ "$GOT_URL" == http* && "$GOT_FILE" == *.zip && "$GOT_SIZE" =~ ^[0-9]+$ ]]; then
-            pass "waydroid_ota_get_download_info: returns valid url|filename|size"
+        REST="${REST#*|}"
+        GOT_SIZE="${REST%%|*}"
+        GOT_SHA="${REST#*|}"
+        if [[ "$GOT_URL" == http* && "$GOT_FILE" == *.zip && "$GOT_SIZE" =~ ^[0-9]+$ && ${#GOT_SHA} -eq 64 ]]; then
+            pass "waydroid_ota_get_download_info: returns valid url|filename|size|sha256"
             echo "    -> url:   $GOT_URL"
             echo "    -> file:  $GOT_FILE"
             echo "    -> size:  $GOT_SIZE bytes"
+            echo "    -> sha256: ${GOT_SHA:0:16}..."
         else
-            fail "waydroid_ota_get_download_info: unexpected output '$INFO' (expected url|file|size)"
+            fail "waydroid_ota_get_download_info: unexpected output '$INFO' (expected url|file|size|sha256)"
         fi
     else
         fail "waydroid_ota_get_download_info: empty output (OTA unreachable or function error)"
