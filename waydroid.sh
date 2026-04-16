@@ -1084,7 +1084,7 @@ view_waydroid_logs() {
   read -p "Press Enter to return to the menu..." _
 }
 
-show_menu() {
+run_menu() {
   WAYDROID_SCRIPT_DIR="$HOME/.local/share/waydroid_script"
 
   if [ ! -d "$WAYDROID_SCRIPT_DIR" ] || [ ! -f "$WAYDROID_SCRIPT_DIR/main.py" ]; then
