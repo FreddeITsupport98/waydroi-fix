@@ -320,10 +320,10 @@ waydroid_download_with_progress() {
     local logfile
     logfile=$(mktemp)
 
-    echo -e "\n  ${YELLOW}\u25bc ${label}:${NC} ${filename}"
-    printf '  '
-    printf '\xe2\x94\x80%.0s' {1..68}
-    echo
+    # NOTE: all display goes to stderr — this function is called inside $() so
+    # stdout is captured by the caller to collect the return value (dest path).
+    echo -e "\n  ${YELLOW}\u25bc ${label}:${NC} ${filename}" >&2
+    { printf '  '; printf '\xe2\x94\x80%.0s' {1..68}; echo; } >&2
 
     # Start aria2c in background; --log captures progress lines, --summary-interval=1
     # writes a progress update to the log file every second
@@ -337,7 +337,8 @@ waydroid_download_with_progress() {
 
     # Python tails the aria2c log and draws a live [████░░░] progress bar.
     # Falls back to a spinner while waiting for the first progress entry.
-    python3 - "${logfile}" "${aria_pid}" "${total_bytes}" <<'PROGEOF'
+    # Redirected to stderr so it shows through the $() capture in the caller.
+    python3 - "${logfile}" "${aria_pid}" "${total_bytes}" >&2 <<'PROGEOF'
 import re, sys, time, os
 
 logfile = sys.argv[1]
