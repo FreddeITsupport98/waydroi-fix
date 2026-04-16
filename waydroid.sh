@@ -59,9 +59,13 @@ ensure_opensuse_magisk_pkgs() {
 # Default architecture used on SourceForge paths
 WAYDROID_ARCH="x86_64"
 
-# Official Waydroid OTA server endpoints
+# Official Waydroid OTA server channel base URLs
+# Full URL format (path-based, not query params):
+#   system: {OTA_SYSTEM_URL}/{WAYDROID_ROM_TYPE}/waydroid_{arch}/{TYPE}.json
+#   vendor: {OTA_VENDOR_URL}/waydroid_{arch}/MAINLINE.json
 OTA_SYSTEM_URL="https://ota.waydro.id/system"
 OTA_VENDOR_URL="https://ota.waydro.id/vendor"
+WAYDROID_ROM_TYPE="lineage"   # matches waydroid's default rom_type
 
 # Ensure aria2c (multi-connection downloader) is installed
 ensure_aria2() {
@@ -212,10 +216,19 @@ waydroid_get_latest_filename() {
 }
 
 # Query the Waydroid OTA server and echo "<download_url> <filename>" to stdout
-# Usage: waydroid_ota_get_download_info <ota_base_url> <type> <arch>
+# Usage: waydroid_ota_get_download_info <ota_base_url> <type> <arch> <image_kind>
+#   image_kind: "system" (default) or "vendor"
+# URL format (path-based):
+#   system: {url}/{rom_type}/waydroid_{arch}/{TYPE}.json
+#   vendor: {url}/waydroid_{arch}/{TYPE}.json
 waydroid_ota_get_download_info() {
-    local ota_url="$1" type="$2" arch="$3"
-    local query_url="${ota_url}?TYPE=${type}&ARCH=${arch}"
+    local ota_url="$1" type="$2" arch="$3" image_kind="${4:-system}"
+    local query_url
+    if [[ "${image_kind}" == "vendor" ]]; then
+        query_url="${ota_url}/waydroid_${arch}/${type}.json"
+    else
+        query_url="${ota_url}/${WAYDROID_ROM_TYPE}/waydroid_${arch}/${type}.json"
+    fi
 
     echo -e "  Querying OTA: ${query_url}" >&2
     local json
@@ -248,7 +261,7 @@ waydroid_ota_aria_download() {
 
     echo -e "${YELLOW}Fetching ${label} image info from OTA...${NC}" >&2
     local info
-    info=$(waydroid_ota_get_download_info "${ota_url}" "${type}" "${arch}") || return 1
+    info=$(waydroid_ota_get_download_info "${ota_url}" "${type}" "${arch}" "${label}") || return 1
 
     local dl_url filename
     dl_url=$(awk '{print $1}' <<< "${info}")
