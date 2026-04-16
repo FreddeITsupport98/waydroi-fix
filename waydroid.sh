@@ -59,6 +59,10 @@ ensure_opensuse_magisk_pkgs() {
 # Default architecture used on SourceForge paths
 WAYDROID_ARCH="x86_64"
 
+# Official Waydroid OTA server endpoints
+OTA_SYSTEM_URL="https://ota.waydro.id/system"
+OTA_VENDOR_URL="https://ota.waydro.id/vendor"
+
 # Ensure aria2c (multi-connection downloader) is installed
 ensure_aria2() {
     if command -v aria2c >/dev/null 2>&1; then
@@ -207,10 +211,78 @@ waydroid_get_latest_filename() {
     echo "$filename"
 }
 
-# Mode flag: when called as `waydroid.sh --setup-only`, skip reset/network and only ensure customization tooling
+# Query the Waydroid OTA server and echo "<download_url> <filename>" to stdout
+# Usage: waydroid_ota_get_download_info <ota_base_url> <type> <arch>
+waydroid_ota_get_download_info() {
+    local ota_url="$1" type="$2" arch="$3"
+    local query_url="${ota_url}?TYPE=${type}&ARCH=${arch}"
+
+    echo -e "  Querying OTA: ${query_url}" >&2
+    local json
+    json=$(curl -sL --max-time 30 "${query_url}") || {
+        echo -e "${RED}Failed to contact OTA server: ${ota_url}${NC}" >&2
+        return 1
+    }
+    if [[ -z "${json}" ]]; then
+        echo -e "${RED}Empty response from OTA server: ${query_url}${NC}" >&2
+        return 1
+    fi
+
+    printf '%s' "${json}" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    r = d['response'][0]
+    print(r['url'] + ' ' + r['filename'])
+except Exception as e:
+    print('OTA parse error: ' + str(e), file=sys.stderr)
+    sys.exit(1)
+" || return 1
+}
+
+# Download a Waydroid image from the OTA server using aria2c, caching in dest_dir
+# Usage: waydroid_ota_aria_download <ota_base_url> <type> <arch> <dest_dir> <label>
+# Prints the path to the local (cached or freshly downloaded) file on success
+waydroid_ota_aria_download() {
+    local ota_url="$1" type="$2" arch="$3" dest_dir="$4" label="$5"
+
+    echo -e "${YELLOW}Fetching ${label} image info from OTA...${NC}" >&2
+    local info
+    info=$(waydroid_ota_get_download_info "${ota_url}" "${type}" "${arch}") || return 1
+
+    local dl_url filename
+    dl_url=$(awk '{print $1}' <<< "${info}")
+    filename=$(awk '{print $2}' <<< "${info}")
+    local dest_file="${dest_dir}/${filename}"
+
+    if [[ -f "${dest_file}" ]]; then
+        echo -e "${GREEN}  -> Using cached ${label} image: ${dest_file}${NC}" >&2
+        echo "${dest_file}"
+        return 0
+    fi
+
+    echo -e "${YELLOW}  -> Downloading ${label} image with aria2c (16 connections)...${NC}" >&2
+    echo "     Source: ${dl_url}" >&2
+
+    aria2c -x 16 -s 16 --retry-wait=5 --max-tries=5 \
+        --console-log-level=notice \
+        -d "${dest_dir}" -o "${filename}" "${dl_url}" || {
+        echo -e "${RED}aria2c download failed for ${label} image.${NC}" >&2
+        return 1
+    }
+
+    echo "${dest_file}"
+}
+
+# Mode flags:
+#   --setup-only      skip reset/network, proceed to customization setup
+#   --customize-only  skip reset + way-fix install, jump straight to waydroid_script
 SETUP_ONLY=0
+CUSTOMIZE_ONLY=0
 if [[ "$1" == "--setup-only" ]]; then
     SETUP_ONLY=1
+elif [[ "$1" == "--customize-only" ]]; then
+    CUSTOMIZE_ONLY=1
 fi
 
 # --- 0. Ensure Waydroid is installed ---
@@ -269,11 +341,19 @@ if ! command -v waydroid >/dev/null 2>&1; then
     fi
 fi
 
-if [[ $SETUP_ONLY -eq 0 ]]; then
-    # Ask whether to perform a reset (services + packages, optional data wipe)
-    echo -e "${YELLOW}Do you want to RESET Waydroid? This will restart services and reinstall Waydroid packages. Data deletion is OPTIONAL and asked separately.${NC}"
-    read -p "Reset Waydroid packages and services? (y/n): " -n 1 -r
+if [[ $SETUP_ONLY -eq 0 && $CUSTOMIZE_ONLY -eq 0 ]]; then
+    # Ask whether to perform a full reset, skip to customization, or just download/init
+    echo -e "${YELLOW}What would you like to do?${NC}"
+    echo "  [y] Full reset  -- stop services, reinstall packages, download images"
+    echo "  [s] Skip        -- jump straight to waydroid_script customization (modify existing install)"
+    echo "  [n] Skip reset  -- proceed with download/init only (no service stop or reinstall)"
+    read -p "Choice (y/s/n): " -n 1 -r
     echo
+
+    if [[ $REPLY =~ ^[Ss]$ ]]; then
+        CUSTOMIZE_ONLY=1
+        echo -e "${YELLOW}Skipping to customization step...${NC}"
+    fi
 
     DO_RESET=0
     if [[ $REPLY =~ ^[Yy]$ ]]; then
@@ -565,12 +645,73 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
                 rm -rf "/etc/waydroid-extra/images"
             fi
 
-            # Use the official Waydroid OTA server (ota.waydro.id) and download via aria2c
             ensure_aria2
 
-            echo -e "${YELLOW}Initializing Waydroid via ota.waydro.id with aria2c (16 connections)...${NC}"
-            WAYDROID_DOWNLOAD_TOOL="aria2c -x 16 -s 16" \
-            waydroid init -s "$TYPE" -f -c https://ota.waydro.id/system -v https://ota.waydro.id/vendor
+            SYSTEM_ZIP=""
+            VENDOR_ZIP=""
+
+            if [[ ${USE_LOCAL_ROMS} -eq 1 && -n "${SYSTEM_LOCAL_ZIP}" && -n "${VENDOR_LOCAL_ZIP}" ]]; then
+                SYSTEM_ZIP="${SYSTEM_LOCAL_ZIP}"
+                VENDOR_ZIP="${VENDOR_LOCAL_ZIP}"
+                echo -e "${GREEN}Using cached local ROM files from ${ROM_DIR}.${NC}"
+            else
+                echo -e "${YELLOW}Downloading Android images directly from OTA (${OTA_SYSTEM_URL}, ${OTA_VENDOR_URL}) with aria2c...${NC}"
+                SYSTEM_ZIP=$(waydroid_ota_aria_download \
+                    "${OTA_SYSTEM_URL}" "${TYPE}" "${WAYDROID_ARCH}" "${ROM_DIR}" "system") || {
+                    echo -e "${RED}System image download failed. Aborting.${NC}"
+                    exit 1
+                }
+                VENDOR_ZIP=$(waydroid_ota_aria_download \
+                    "${OTA_VENDOR_URL}" "MAINLINE" "${WAYDROID_ARCH}" "${ROM_DIR}" "vendor") || {
+                    echo -e "${RED}Vendor image download failed. Aborting.${NC}"
+                    exit 1
+                }
+                # Restore cache ownership for invoking user
+                if [[ -n "${SUDO_USER}" && "${SUDO_USER}" != "root" ]]; then
+                    chown -R "${SUDO_USER}:${SUDO_USER}" "${ROM_DIR}" 2>/dev/null || true
+                fi
+            fi
+
+            # Extract .img files from zips into /etc/waydroid-extra/images/
+            echo -e "${YELLOW}Extracting images to /etc/waydroid-extra/images/...${NC}"
+            mkdir -p /etc/waydroid-extra/images
+            python3 - "${SYSTEM_ZIP}" "${VENDOR_ZIP}" <<'PYEOF'
+import zipfile, os, shutil, sys
+
+dest_dir = "/etc/waydroid-extra/images"
+success = True
+
+for zip_path in sys.argv[1:]:
+    label = "system" if "system" in os.path.basename(zip_path).lower() else "vendor"
+    print(f"  Extracting {label} from: {os.path.basename(zip_path)}")
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            imgs = [n for n in zf.namelist() if n.endswith(".img")]
+            if not imgs:
+                print(f"ERROR: no .img file found in {zip_path}", file=sys.stderr)
+                success = False
+                continue
+            for name in imgs:
+                zf.extract(name, dest_dir)
+                extracted = os.path.join(dest_dir, name)
+                final = os.path.join(dest_dir, os.path.basename(name))
+                if extracted != final:
+                    shutil.move(extracted, final)
+                print(f"    -> {final}")
+    except Exception as e:
+        print(f"ERROR extracting {zip_path}: {e}", file=sys.stderr)
+        success = False
+
+sys.exit(0 if success else 1)
+PYEOF
+
+            if [[ $? -ne 0 ]]; then
+                echo -e "${RED}Image extraction failed. Aborting.${NC}"
+                exit 1
+            fi
+
+            echo -e "${YELLOW}Initializing Waydroid with local images...${NC}"
+            waydroid init -f
         fi
 
         if [ $? -ne 0 ]; then
@@ -593,11 +734,14 @@ if [[ $SETUP_ONLY -eq 0 ]]; then
     else
         echo -e "${YELLOW}Skipping Waydroid reset. Proceeding directly to customization...${NC}"
     fi
+elif [[ $SETUP_ONLY -eq 1 ]]; then
+    echo -e "${YELLOW}Setup-only mode: skipping Waydroid reset phase.${NC}"
 else
-    echo -e "${YELLOW}Setup-only mode detected: skipping Waydroid reset phase.${NC}"
+    echo -e "${YELLOW}Customize-only mode: skipping directly to waydroid_script customization.${NC}"
 fi
 
-# Offer to install the 'way-fix' CLI helper
+# Offer to install the 'way-fix' CLI helper (skipped in customize-only mode)
+if [[ $CUSTOMIZE_ONLY -eq 0 ]]; then
 echo -e "\n${YELLOW}Do you want to install the 'way-fix' CLI helper (way-fix, way-fix reboot, way-fix config, way-fix uninstall)?${NC}"
 read -p "Install way-fix CLI into /usr/local/bin? (y/n): " -n 1 -r
 echo
@@ -965,6 +1109,7 @@ EOF
 else
     echo "Skipping installation of way-fix CLI."
 fi
+fi # end customize-only skip: way-fix install
 
 # --- 6. OPTIONAL CUSTOMIZATION VIA waydroid_script ---
 echo -e "\n${YELLOW}[Optional] Setting up waydroid_script customization helper...${NC}"
