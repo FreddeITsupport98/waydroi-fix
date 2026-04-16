@@ -246,11 +246,105 @@ import json, sys
 try:
     d = json.load(sys.stdin)
     r = d['response'][0]
-    print(r['url'] + ' ' + r['filename'])
+    print(r['url'] + '|' + r['filename'] + '|' + str(r.get('size', 0)))
 except Exception as e:
     print('OTA parse error: ' + str(e), file=sys.stderr)
     sys.exit(1)
 " || return 1
+}
+
+# Download with a live progress bar via aria2c RPC and a Python display loop.
+# Usage: waydroid_download_with_progress <url> <dest_dir> <filename> <label> <total_bytes>
+waydroid_download_with_progress() {
+    local dl_url="$1" dest_dir="$2" filename="$3" label="$4" total_bytes="${5:-0}"
+
+    # Find a free port for aria2c's RPC server
+    local rpc_port
+    rpc_port=$(python3 -c \
+        "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()")
+
+    echo -e "\n  ${YELLOW}▼ ${label}:${NC} ${filename}"
+    printf '  '
+    printf '\xe2\x94\x80%.0s' {1..68}
+    echo
+
+    # Start aria2c in background with RPC enabled, suppress all console output
+    aria2c -x 16 -s 16 --retry-wait=5 --max-tries=5 \
+        --enable-rpc=true \
+        --rpc-listen-port="${rpc_port}" \
+        --rpc-listen-all=false \
+        --console-log-level=error \
+        --quiet=true \
+        -d "${dest_dir}" -o "${filename}" "${dl_url}" &
+    local aria_pid=$!
+
+    # Give aria2c a moment to start the RPC server before polling
+    sleep 1
+
+    # Python progress bar — polls aria2c RPC every 0.4 s
+    python3 - "${rpc_port}" "${aria_pid}" "${total_bytes}" <<'PROGEOF'
+import json, sys, time, urllib.request, os
+
+port  = int(sys.argv[1])
+apid  = int(sys.argv[2])
+total = int(sys.argv[3])
+
+BAR   = 46
+GRN   = "\033[32m"; CYN = "\033[36m"; RST = "\033[0m"; BOLD = "\033[1m"
+
+def rpc_active():
+    try:
+        body = json.dumps({"jsonrpc":"2.0","id":"p","method":"aria2.tellActive",
+                           "params":[["completedLength","totalLength","downloadSpeed"]]}).encode()
+        req  = urllib.request.Request(f"http://127.0.0.1:{port}/jsonrpc",
+                                      body, {"Content-Type":"application/json"})
+        with urllib.request.urlopen(req, timeout=2) as r:
+            return json.load(r).get("result", [])
+    except Exception:
+        return []
+
+def hs(n):
+    for d, u in ((1 << 30, "GiB"), (1 << 20, "MiB"), (1 << 10, "KiB")):
+        if n >= d:
+            return f"{n / d:.1f} {u}"
+    return f"{n} B"
+
+def draw(pct, done, tot, spd):
+    filled = round(BAR * pct / 100)
+    bar    = f"{GRN}{'\u2588' * filled}{RST}{'\u2591' * (BAR - filled)}"
+    size   = f"{hs(done)}/{hs(tot)}" if tot else hs(done)
+    speed  = f"{CYN}{BOLD}{hs(spd)}/s{RST}" if spd else "--"
+    print(f"\r  [{bar}] {BOLD}{pct:3d}%{RST}  {size}  {speed}    ",
+          end="", flush=True)
+
+try:
+    while True:
+        try:
+            os.kill(apid, 0)
+        except OSError:
+            break
+        items = rpc_active()
+        if items:
+            i    = items[0]
+            done = int(i.get("completedLength", 0))
+            tot  = int(i.get("totalLength",    0)) or total
+            spd  = int(i.get("downloadSpeed",  0))
+            pct  = done * 100 // tot if tot else 0
+            draw(pct, done, tot, spd)
+        time.sleep(0.4)
+except KeyboardInterrupt:
+    pass
+
+draw(100, total, total, 0)
+print()
+PROGEOF
+
+    wait "${aria_pid}"
+    local rc=$?
+    if [[ $rc -ne 0 ]]; then
+        echo -e "${RED}  aria2c failed (exit ${rc}).${NC}" >&2
+    fi
+    return $rc
 }
 
 # Download a Waydroid image from the OTA server using aria2c, caching in dest_dir
@@ -263,9 +357,12 @@ waydroid_ota_aria_download() {
     local info
     info=$(waydroid_ota_get_download_info "${ota_url}" "${type}" "${arch}" "${label}") || return 1
 
-    local dl_url filename
-    dl_url=$(awk '{print $1}' <<< "${info}")
-    filename=$(awk '{print $2}' <<< "${info}")
+    # Parse pipe-delimited output: url|filename|size
+    local dl_url filename total_bytes rest
+    dl_url="${info%%|*}"
+    rest="${info#*|}"
+    filename="${rest%%|*}"
+    total_bytes="${rest#*|}"
     local dest_file="${dest_dir}/${filename}"
 
     if [[ -f "${dest_file}" ]]; then
@@ -291,15 +388,8 @@ waydroid_ota_aria_download() {
         echo -e "${YELLOW}     -> Could not resolve CDN, using original URL${NC}" >&2
     fi
 
-    echo -e "${YELLOW}  -> Downloading ${label} image with aria2c (16 connections)...${NC}" >&2
-    echo "     Source: ${dl_url}" >&2
-
-    aria2c -x 16 -s 16 --retry-wait=5 --max-tries=5 \
-        --console-log-level=notice \
-        -d "${dest_dir}" -o "${filename}" "${dl_url}" || {
-        echo -e "${RED}aria2c download failed for ${label} image.${NC}" >&2
-        return 1
-    }
+    waydroid_download_with_progress \
+        "${dl_url}" "${dest_dir}" "${filename}" "${label}" "${total_bytes}" || return 1
 
     echo "${dest_file}"
 }

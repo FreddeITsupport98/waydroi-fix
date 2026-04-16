@@ -193,14 +193,17 @@ waydroid_ota_get_download_info 'https://ota.waydro.id/system' 'VANILLA' 'x86_64'
 " 2>/dev/null)
 
     if [[ -n "$INFO" ]]; then
-        GOT_URL=$(awk '{print $1}' <<< "$INFO")
-        GOT_FILE=$(awk '{print $2}' <<< "$INFO")
-        if [[ "$GOT_URL" == http* && "$GOT_FILE" == *.zip ]]; then
-            pass "waydroid_ota_get_download_info: returns valid url + filename"
-            echo "    -> url:  $GOT_URL"
-            echo "    -> file: $GOT_FILE"
+        GOT_URL="${INFO%%|*}"
+        REST="${INFO#*|}"
+        GOT_FILE="${REST%%|*}"
+        GOT_SIZE="${REST#*|}"
+        if [[ "$GOT_URL" == http* && "$GOT_FILE" == *.zip && "$GOT_SIZE" =~ ^[0-9]+$ ]]; then
+            pass "waydroid_ota_get_download_info: returns valid url|filename|size"
+            echo "    -> url:   $GOT_URL"
+            echo "    -> file:  $GOT_FILE"
+            echo "    -> size:  $GOT_SIZE bytes"
         else
-            fail "waydroid_ota_get_download_info: unexpected output '$INFO'"
+            fail "waydroid_ota_get_download_info: unexpected output '$INFO' (expected url|file|size)"
         fi
     else
         fail "waydroid_ota_get_download_info: empty output (OTA unreachable or function error)"
@@ -328,6 +331,15 @@ if grep -q 'max-filesize 1' "$WAYDROID_SH" && grep -q 'url_effective' "$WAYDROID
     pass "aria2c: SF redirect resolution code present in waydroid.sh"
 else
     fail "aria2c: SF redirect resolution code missing from waydroid.sh"
+fi
+
+# Confirm RPC progress function is present
+if grep -q 'waydroid_download_with_progress' "$WAYDROID_SH" && \
+   grep -q 'enable-rpc' "$WAYDROID_SH" && \
+   grep -q 'rpc_active' "$WAYDROID_SH"; then
+    pass "Progress bar: waydroid_download_with_progress with RPC present"
+else
+    fail "Progress bar: waydroid_download_with_progress function missing or incomplete"
 fi
 
 # =============================================================================
