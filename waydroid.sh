@@ -274,6 +274,23 @@ waydroid_ota_aria_download() {
         return 0
     fi
 
+    # Resolve SourceForge /download redirect to actual CDN mirror URL.
+    # SF returns 403 to aria2c's multi-connection pattern, but the CDN mirror
+    # URL it redirects to works fine. We use --max-filesize 1 to abort after
+    # the first byte so we get url_effective without downloading the whole file.
+    echo -e "${YELLOW}  -> Resolving CDN mirror for ${label} image...${NC}" >&2
+    local resolved_url
+    resolved_url=$(curl -sL --max-time 15 --max-filesize 1 \
+        -o /dev/null -w "%{url_effective}" "${dl_url}" 2>/dev/null || true)
+    # Strip any stray whitespace/newlines
+    resolved_url="${resolved_url//[[:space:]]/}"
+    if [[ -n "${resolved_url}" && "${resolved_url}" != "${dl_url}" ]]; then
+        echo -e "     -> CDN: ${resolved_url}" >&2
+        dl_url="${resolved_url}"
+    else
+        echo -e "${YELLOW}     -> Could not resolve CDN, using original URL${NC}" >&2
+    fi
+
     echo -e "${YELLOW}  -> Downloading ${label} image with aria2c (16 connections)...${NC}" >&2
     echo "     Source: ${dl_url}" >&2
 

@@ -303,9 +303,37 @@ fi
 rm -rf "$TMPDIR_TEST"
 
 # =============================================================================
-# 8. aria2c DOWNLOAD FUNCTION STRUCTURE
+# 8. SourceForge CDN MIRROR RESOLUTION
 # =============================================================================
-section "8. aria2c download function present and structured correctly"
+section "8. SourceForge CDN mirror resolution"
+
+SF_URL="https://sourceforge.net/projects/waydroid/files/images/system/lineage/waydroid_x86_64/lineage-20.0-20260403-VANILLA-waydroid_x86_64-system.zip/download"
+echo "  Resolving: $SF_URL"
+CDN_URL=$(curl -sL --max-time 15 --max-filesize 1 \
+    -o /dev/null -w "%{url_effective}" "$SF_URL" 2>/dev/null || true)
+CDN_URL="${CDN_URL//[[:space:]]/}"
+echo "  -> Resolved: $CDN_URL"
+
+if [[ -n "$CDN_URL" && "$CDN_URL" != "$SF_URL" && "$CDN_URL" == *"dl.sourceforge.net"* ]]; then
+    pass "CDN resolution: resolved to direct mirror (*.dl.sourceforge.net)"
+elif [[ -n "$CDN_URL" && "$CDN_URL" != "$SF_URL" ]]; then
+    pass "CDN resolution: resolved to a different URL (CDN mirror)"
+    echo "    Note: URL does not contain dl.sourceforge.net — may be a custom mirror"
+else
+    fail "CDN resolution: could not resolve to a direct CDN URL (aria2c will likely fail)"
+fi
+
+# Confirm the mirror resolution code is present in waydroid.sh
+if grep -q 'max-filesize 1' "$WAYDROID_SH" && grep -q 'url_effective' "$WAYDROID_SH"; then
+    pass "aria2c: SF redirect resolution code present in waydroid.sh"
+else
+    fail "aria2c: SF redirect resolution code missing from waydroid.sh"
+fi
+
+# =============================================================================
+# 9. aria2c DOWNLOAD FUNCTION STRUCTURE
+# =============================================================================
+section "9. aria2c download function present and structured correctly"
 
 # Check aria2c command line flags are correct
 if grep -A 5 'aria2c -x 16 -s 16' "$WAYDROID_SH" | grep -q -- '--retry-wait=5'; then
