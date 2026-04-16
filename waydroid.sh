@@ -253,97 +253,97 @@ except Exception as e:
 " || return 1
 }
 
-# Download with a live progress bar via aria2c RPC and a Python display loop.
+# Download with a live progress bar by parsing aria2c's log file output.
+# No RPC needed — works with any aria2c build.
 # Usage: waydroid_download_with_progress <url> <dest_dir> <filename> <label> <total_bytes>
 waydroid_download_with_progress() {
     local dl_url="$1" dest_dir="$2" filename="$3" label="$4" total_bytes="${5:-0}"
+    local logfile
+    logfile=$(mktemp)
 
-    # Find a free port for aria2c's RPC server
-    local rpc_port
-    rpc_port=$(python3 -c \
-        "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()")
-
-    echo -e "\n  ${YELLOW}▼ ${label}:${NC} ${filename}"
+    echo -e "\n  ${YELLOW}\u25bc ${label}:${NC} ${filename}"
     printf '  '
     printf '\xe2\x94\x80%.0s' {1..68}
     echo
 
-    # Start aria2c in background with RPC enabled, suppress all console output
+    # Start aria2c in background; --log captures progress lines, --summary-interval=1
+    # writes a progress update to the log file every second
     aria2c -x 16 -s 16 --retry-wait=5 --max-tries=5 \
-        --enable-rpc=true \
-        --rpc-listen-port="${rpc_port}" \
-        --rpc-listen-all=false \
+        --log="${logfile}" --log-level=notice \
+        --summary-interval=1 \
         --console-log-level=error \
         --quiet=true \
         -d "${dest_dir}" -o "${filename}" "${dl_url}" &
     local aria_pid=$!
 
-    # Give aria2c a moment to start the RPC server before polling
-    sleep 1
+    # Python tails the aria2c log and draws a live [████░░░] progress bar.
+    # Falls back to a spinner while waiting for the first progress entry.
+    python3 - "${logfile}" "${aria_pid}" "${total_bytes}" <<'PROGEOF'
+import re, sys, time, os
 
-    # Python progress bar — polls aria2c RPC every 0.4 s
-    python3 - "${rpc_port}" "${aria_pid}" "${total_bytes}" <<'PROGEOF'
-import json, sys, time, urllib.request, os
+logfile = sys.argv[1]
+apid    = int(sys.argv[2])
+total   = int(sys.argv[3])
 
-port  = int(sys.argv[1])
-apid  = int(sys.argv[2])
-total = int(sys.argv[3])
+BAR  = 46
+GRN  = "\033[32m"; CYN = "\033[36m"; RST = "\033[0m"; BOLD = "\033[1m"
+SPIN = "|/-\\"
 
-BAR   = 46
-GRN   = "\033[32m"; CYN = "\033[36m"; RST = "\033[0m"; BOLD = "\033[1m"
+# Matches aria2c summary lines:
+#   [#gid 450MiB/1.1GiB(40%) CN:16 DL:5.2MiB ETA:1m30s]
+RE = re.compile(
+    r'\[#\w+\s+([^(]+)\((\d+)%\).*?DL:(\S+).*?ETA:(\S+)\]'
+)
 
-def rpc_active():
-    try:
-        body = json.dumps({"jsonrpc":"2.0","id":"p","method":"aria2.tellActive",
-                           "params":[["completedLength","totalLength","downloadSpeed"]]}).encode()
-        req  = urllib.request.Request(f"http://127.0.0.1:{port}/jsonrpc",
-                                      body, {"Content-Type":"application/json"})
-        with urllib.request.urlopen(req, timeout=2) as r:
-            return json.load(r).get("result", [])
-    except Exception:
-        return []
-
-def hs(n):
-    for d, u in ((1 << 30, "GiB"), (1 << 20, "MiB"), (1 << 10, "KiB")):
-        if n >= d:
-            return f"{n / d:.1f} {u}"
-    return f"{n} B"
-
-def draw(pct, done, tot, spd):
+def draw(pct, size_str, speed_str):
     filled = round(BAR * pct / 100)
     bar    = f"{GRN}{'\u2588' * filled}{RST}{'\u2591' * (BAR - filled)}"
-    size   = f"{hs(done)}/{hs(tot)}" if tot else hs(done)
-    speed  = f"{CYN}{BOLD}{hs(spd)}/s{RST}" if spd else "--"
-    print(f"\r  [{bar}] {BOLD}{pct:3d}%{RST}  {size}  {speed}    ",
+    spd    = f"{CYN}{BOLD}{speed_str}/s{RST}" if speed_str != "--" else "--"
+    print(f"\r  [{bar}] {BOLD}{pct:3d}%{RST}  {size_str}  {spd}    ",
           end="", flush=True)
 
+tick, last_pct = 0, -1
 try:
     while True:
         try:
             os.kill(apid, 0)
         except OSError:
             break
-        items = rpc_active()
-        if items:
-            i    = items[0]
-            done = int(i.get("completedLength", 0))
-            tot  = int(i.get("totalLength",    0)) or total
-            spd  = int(i.get("downloadSpeed",  0))
-            pct  = done * 100 // tot if tot else 0
-            draw(pct, done, tot, spd)
-        time.sleep(0.4)
+
+        # Read the last matching progress line from the aria2c log
+        match = None
+        try:
+            with open(logfile, errors="replace") as f:
+                for line in f:
+                    m = RE.search(line)
+                    if m:
+                        match = m
+        except FileNotFoundError:
+            pass
+
+        if match:
+            pct      = int(match.group(2))
+            size_str = match.group(1).strip()
+            spd_str  = match.group(3)
+            draw(pct, size_str, spd_str)
+            last_pct = pct
+        else:
+            sp = SPIN[tick % 4]
+            print(f"\r  [{sp}] Starting download, please wait...               ",
+                  end="", flush=True)
+        tick += 1
+        time.sleep(0.5)
 except KeyboardInterrupt:
     pass
 
-draw(100, total, total, 0)
+draw(100 if last_pct >= 0 else 0, "complete", "--")
 print()
 PROGEOF
 
     wait "${aria_pid}"
     local rc=$?
-    if [[ $rc -ne 0 ]]; then
-        echo -e "${RED}  aria2c failed (exit ${rc}).${NC}" >&2
-    fi
+    rm -f "${logfile}"
+    [[ $rc -ne 0 ]] && echo -e "${RED}  Download failed (exit ${rc}).${NC}" >&2
     return $rc
 }
 
@@ -371,21 +371,18 @@ waydroid_ota_aria_download() {
         return 0
     fi
 
-    # Resolve SourceForge /download redirect to actual CDN mirror URL.
-    # SF returns 403 to aria2c's multi-connection pattern, but the CDN mirror
-    # URL it redirects to works fine. We use --max-filesize 1 to abort after
-    # the first byte so we get url_effective without downloading the whole file.
+    # Resolve SourceForge /download redirect to the actual CDN mirror URL.
+    # Uses a HEAD request (no body download) so resolution is near-instant.
     echo -e "${YELLOW}  -> Resolving CDN mirror for ${label} image...${NC}" >&2
     local resolved_url
-    resolved_url=$(curl -sL --max-time 15 --max-filesize 1 \
+    resolved_url=$(curl -s --head -L --max-time 10 --max-redirs 5 \
         -o /dev/null -w "%{url_effective}" "${dl_url}" 2>/dev/null || true)
-    # Strip any stray whitespace/newlines
     resolved_url="${resolved_url//[[:space:]]/}"
     if [[ -n "${resolved_url}" && "${resolved_url}" != "${dl_url}" ]]; then
         echo -e "     -> CDN: ${resolved_url}" >&2
         dl_url="${resolved_url}"
     else
-        echo -e "${YELLOW}     -> Could not resolve CDN, using original URL${NC}" >&2
+        echo -e "${YELLOW}     -> Could not resolve CDN mirror, using original URL${NC}" >&2
     fi
 
     waydroid_download_with_progress \

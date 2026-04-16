@@ -326,18 +326,19 @@ else
     fail "CDN resolution: could not resolve to a direct CDN URL (aria2c will likely fail)"
 fi
 
-# Confirm the mirror resolution code is present in waydroid.sh
-if grep -q 'max-filesize 1' "$WAYDROID_SH" && grep -q 'url_effective' "$WAYDROID_SH"; then
-    pass "aria2c: SF redirect resolution code present in waydroid.sh"
+# Confirm the mirror resolution code uses HEAD request (fast, no body download)
+if grep -q 'curl -s --head -L' "$WAYDROID_SH" && grep -q 'url_effective' "$WAYDROID_SH"; then
+    pass "CDN resolution: uses HEAD request (no body download)"
 else
-    fail "aria2c: SF redirect resolution code missing from waydroid.sh"
+    fail "CDN resolution: HEAD-based resolution code missing from waydroid.sh"
 fi
 
-# Confirm RPC progress function is present
+# Confirm log-file based progress function is present (no RPC dependency)
 if grep -q 'waydroid_download_with_progress' "$WAYDROID_SH" && \
-   grep -q 'enable-rpc' "$WAYDROID_SH" && \
-   grep -q 'rpc_active' "$WAYDROID_SH"; then
-    pass "Progress bar: waydroid_download_with_progress with RPC present"
+   grep -q 'summary-interval' "$WAYDROID_SH" && \
+   grep -q 'log-level=notice' "$WAYDROID_SH" && \
+   grep -q 'SPIN' "$WAYDROID_SH"; then
+    pass "Progress bar: log-file based display (spinner + bar) present"
 else
     fail "Progress bar: waydroid_download_with_progress function missing or incomplete"
 fi
